@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import List
 from pydantic import BaseModel, Field
 
 
@@ -11,3 +12,4 @@ class UserResponse(BaseModel):
     email: str
     name: str
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    project_ids: List[str] = Field(default_factory=list)

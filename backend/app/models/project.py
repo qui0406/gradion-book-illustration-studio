@@ -19,6 +19,12 @@ class StepStateEnum(str, Enum):
     FAILED = "FAILED"
 
 
+class CreateProjectRequest(BaseModel):
+    user_email: str
+    title: str
+    book_text: str
+
+
 class Character(BaseModel):
     id: str
     name: str

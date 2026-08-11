@@ -38,6 +38,39 @@ def test_auth_signin_and_me():
     assert me_data["email"] == "qui0406@example.com"
 
 
+def test_create_and_get_project():
+    """
+    Test POST /api/projects, GET /api/projects?email=, and GET /api/projects/{id}.
+    """
+    payload = {
+        "user_email": "qui0406@example.com",
+        "title": "Hoàng Tử Bé",
+        "book_text": "Ngày xửa ngày xưa có một hoàng tử bé sống trên hành tinh B-612..."
+    }
+    response = client.post("/api/projects", json=payload)
+    assert response.status_code == 200
+    res_json = response.json()
+    assert "data" in res_json
+    data = res_json["data"]
+    assert data["id"].startswith("proj_")
+    assert data["title"] == "Hoàng Tử Bé"
+    assert data["status"] == "CREATED"
+    assert data["step_state"] == "IDLE"
+
+    project_id = data["id"]
+
+    # Get project by ID
+    get_resp = client.get(f"/api/projects/{project_id}")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["data"]["id"] == project_id
+
+    # List user projects
+    list_resp = client.get("/api/projects?email=qui0406@example.com")
+    assert list_resp.status_code == 200
+    projects = list_resp.json()["data"]
+    assert any(p["id"] == project_id for p in projects)
+
+
 def test_project_character_limit_validation():
     """
     Test that Pydantic Project model enforces max 2 adult characters constraint.

@@ -23,6 +23,8 @@ def get_user_file_path(email: str) -> str:
 
 
 def save_user(user_data: dict) -> dict:
+    if "project_ids" not in user_data:
+        user_data["project_ids"] = []
     file_path = get_user_file_path(user_data["email"])
     lock_path = f"{file_path}.lock"
     with FileLock(lock_path):
@@ -38,7 +40,18 @@ def load_user(email: str) -> Optional[dict]:
     lock_path = f"{file_path}.lock"
     with FileLock(lock_path):
         with open(file_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            if "project_ids" not in data:
+                data["project_ids"] = []
+            return data
+
+
+def add_project_to_user(user_email: str, project_id: str) -> None:
+    user = load_user(user_email)
+    if user:
+        if project_id not in user.get("project_ids", []):
+            user.setdefault("project_ids", []).append(project_id)
+            save_user(user)
 
 
 # --- PROJECT STORAGE ---
@@ -54,6 +67,9 @@ def save_project(project: Project) -> Project:
     with FileLock(lock_path):
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(project_dict, f, ensure_ascii=False, indent=2)
+
+    # Update user index file
+    add_project_to_user(project.user_email, project.id)
     return project
 
 
@@ -69,16 +85,26 @@ def load_project(project_id: str) -> Optional[Project]:
 
 
 def list_user_projects(user_email: str) -> List[Project]:
-    projects = []
-    if not os.path.exists(PROJECTS_DIR):
-        return projects
+    projects_dict = {}
 
-    for filename in os.listdir(PROJECTS_DIR):
-        if filename.endswith(".json") and not filename.endswith(".lock"):
-            project_id = filename[:-5]
-            proj = load_project(project_id)
-            if proj and proj.user_email == user_email:
-                projects.append(proj)
+    # Scan projects directory for all files belonging to user
+    if os.path.exists(PROJECTS_DIR):
+        for filename in os.listdir(PROJECTS_DIR):
+            if filename.endswith(".json") and not filename.endswith(".lock"):
+                project_id = filename[:-5]
+                proj = load_project(project_id)
+                if proj and proj.user_email == user_email:
+                    projects_dict[proj.id] = proj
 
+    projects = list(projects_dict.values())
     projects.sort(key=lambda x: x.created_at, reverse=True)
+
+    # Sync project_ids to user profile if needed
+    user = load_user(user_email)
+    if user:
+        current_ids = [p.id for p in projects]
+        if set(user.get("project_ids", [])) != set(current_ids):
+            user["project_ids"] = current_ids
+            save_user(user)
+
     return projects
