@@ -1,53 +1,65 @@
+from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
-class StepStatus(str, Enum):
-    IDLE = "idle"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    FAILED = "failed"
+class StatusEnum(str, Enum):
+    CREATED = "CREATED"
+    STYLE_SET = "STYLE_SET"
+    CHARACTERS_GENERATED = "CHARACTERS_GENERATED"
+    PORTRAITS_GENERATED = "PORTRAITS_GENERATED"
+    CHAPTERS_GENERATED = "CHAPTERS_GENERATED"
+    DONE = "DONE"
 
 
-class PipelineStep(str, Enum):
-    STYLE = "style"
-    CHARACTERS = "characters"
-    PORTRAITS = "portraits"
-    CHAPTERS = "chapters"
-    ILLUSTRATIONS = "illustrations"
+class StepStateEnum(str, Enum):
+    IDLE = "IDLE"
+    RUNNING = "RUNNING"
+    FAILED = "FAILED"
 
 
 class Character(BaseModel):
-    """Skeleton model for adult characters (max 2 enforced)."""
-
     id: str
     name: str
-    description: str
-    is_adult: bool = True
-    portrait_url: Optional[str] = None
+    image_prompt: str
+    portrait_ready: bool = False
+    portrait_path: Optional[str] = None
 
 
 class Chapter(BaseModel):
-    """Skeleton model for chapter (max 1 enforced)."""
-
     id: str
     title: str
-    summary: str
-    illustration_url: Optional[str] = None
+    illustration_prompt: str
+    illustration_ready: bool = False
+    illustration_path: Optional[str] = None
 
 
 class Project(BaseModel):
-    """
-    Skeleton Pydantic model representing project state.
-    """
-
     id: str
+    user_email: str
     title: str
-    book_content: str
-    current_step: PipelineStep = PipelineStep.STYLE
-    step_status: StepStatus = StepStatus.IDLE
-    art_style: Optional[str] = None
-    characters: List[Character] = Field(default_factory=list, max_length=2)
-    chapters: List[Chapter] = Field(default_factory=list, max_length=1)
-    error_message: Optional[str] = None
+    book_text: str
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    status: StatusEnum = StatusEnum.CREATED
+    step_state: StepStateEnum = StepStateEnum.IDLE
+    step_started_at: Optional[str] = None
+    step_error: Optional[str] = None
+    style: Optional[str] = None
+    characters: List[Character] = Field(default_factory=list)
+    chapters: List[Chapter] = Field(default_factory=list)
+    gemini_session_ref: Optional[str] = None
+
+    @field_validator("characters")
+    @classmethod
+    def validate_max_characters(cls, v: List[Character]) -> List[Character]:
+        if len(v) > 2:
+            raise ValueError("Maximum 2 adult characters allowed per project")
+        return v
+
+    @field_validator("chapters")
+    @classmethod
+    def validate_max_chapters(cls, v: List[Chapter]) -> List[Chapter]:
+        if len(v) > 1:
+            raise ValueError("Maximum 1 chapter allowed per project")
+        return v
