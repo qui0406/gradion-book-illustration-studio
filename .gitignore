@@ -1,9 +1,17 @@
-node_modules/
+# Backend
+backend/venv/
+backend/__pycache__/
+*.pyc
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Environment & Data
 .env
-data/
+data/*
 !data/.gitkeep
-dist/
-build/
+
+# Logs & System
 *.log
 .DS_Store
-coverage/
