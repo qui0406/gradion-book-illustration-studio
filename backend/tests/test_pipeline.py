@@ -38,6 +38,22 @@ def test_auth_signin_and_me():
     assert me_data["email"] == "qui0406@example.com"
 
 
+def test_security_email_and_path_traversal_validation():
+    """
+    Test invalid email format rejection & path traversal prevention.
+    """
+    # Invalid email
+    payload = {"email": "invalid-email-string", "name": "Anh Qui"}
+    response = client.post("/api/auth/signin", json=payload)
+    assert response.status_code == 400
+    assert "Invalid email format" in response.json()["detail"]
+
+    # Path traversal attack attempt in email parameter
+    traversal_payload = {"email": "../../etc/passwd@example.com", "name": "Hacker"}
+    traversal_resp = client.post("/api/auth/signin", json=traversal_payload)
+    assert traversal_resp.status_code == 400
+
+
 def test_create_and_get_project():
     """
     Test POST /api/projects, GET /api/projects?email=, and GET /api/projects/{id}.

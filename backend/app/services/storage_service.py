@@ -1,8 +1,10 @@
 import json
 import os
+import re
 from typing import Dict, List, Optional
 from filelock import FileLock
 from app.models.project import Project
+
 
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../data"))
 USERS_DIR = os.path.join(DATA_DIR, "users")
@@ -15,11 +17,30 @@ os.makedirs(PROJECTS_DIR, exist_ok=True)
 os.makedirs(IMAGES_DIR, exist_ok=True)
 
 
+def is_valid_email(email: str) -> bool:
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email))
+
+
 # --- USER STORAGE ---
 
 def get_user_file_path(email: str) -> str:
-    safe_email = email.replace("/", "_").replace("\\", "_")
-    return os.path.join(USERS_DIR, f"{safe_email}.json")
+    # Validate email format
+    if not is_valid_email(email):
+        raise ValueError("Invalid email format")
+
+    # Only allow safe characters
+    safe_email = re.sub(r'[^a-zA-Z0-9@._-]', '_', email)
+
+    # Ensure path stays within USERS_DIR (Prevent Path Traversal)
+    filepath = os.path.join(USERS_DIR, f"{safe_email}.json")
+    real_path = os.path.realpath(filepath)
+    base_path = os.path.realpath(USERS_DIR)
+
+    if not real_path.startswith(base_path):
+        raise ValueError("Path traversal detected")
+
+    return real_path
 
 
 def save_user(user_data: dict) -> dict:
@@ -34,6 +55,9 @@ def save_user(user_data: dict) -> dict:
 
 
 def load_user(email: str) -> Optional[dict]:
+    if not is_valid_email(email):
+        raise ValueError("Invalid email format")
+
     file_path = get_user_file_path(email)
     if not os.path.exists(file_path):
         return None
@@ -57,7 +81,15 @@ def add_project_to_user(user_email: str, project_id: str) -> None:
 # --- PROJECT STORAGE ---
 
 def get_project_file_path(project_id: str) -> str:
-    return os.path.join(PROJECTS_DIR, f"{project_id}.json")
+    # Ensure safe project_id filename
+    safe_id = re.sub(r'[^a-zA-Z0-9_-]', '_', project_id)
+    filepath = os.path.join(PROJECTS_DIR, f"{safe_id}.json")
+    real_path = os.path.realpath(filepath)
+    base_path = os.path.realpath(PROJECTS_DIR)
+
+    if not real_path.startswith(base_path):
+        raise ValueError("Path traversal detected")
+    return real_path
 
 
 def save_project(project: Project) -> Project:

@@ -26,7 +26,7 @@ I built this project using Cursor with Claude 3.5 Sonnet. Each decision below or
 
 ---
 
-## 3. Envelope API Response Format with User Context (AI Proposal Rejected)
+## 3. Envelope API Response Format with User Context (AI Proposal Rejected #2)
 
 - **Context & AI Proposal**: Claude initially proposed returning a flat JSON array for `GET /api/projects?email=`, where every project item duplicated `"user_email": "user@example.com"`.
 - **My Challenge / Rejection**: I rejected returning a flat array — repeating `user_email` on every single project in the array creates unnecessary data duplication and denormalization. Furthermore, a flat array lacks top-level owner context (e.g., user name and email).
@@ -35,4 +35,14 @@ I built this project using Cursor with Claude 3.5 Sonnet. Each decision below or
   - An inner `"data": [...]` array contains the list of user projects.
 - **Trade-off**: Adds one level of nesting (`response.data`), requiring the frontend to unwrap `data`, but eliminates redundant `user_email` fields across array items and provides clean, normalized user context.
 
+---
 
+## 4. Input Validation & Path Traversal Prevention on File-based Storage (User Caught AI Mistake #1)
+
+- **Context & AI Code**: Claude implemented the file-based storage service by directly formatting raw inputs (e.g., `email`) into file paths like `f"data/users/{email}.json"` without input sanitization or path canonicalization.
+- **My Challenge / Discovery**: I caught this security vulnerability during code review — relying on raw user input for filesystem paths exposes the application to **Path Traversal Attacks** (e.g., malicious input like `../../other_file` escaping the `data/users/` folder to access or overwrite arbitrary files on disk) and invalid filename crashes.
+- **Final Decision**: Implemented strict security validations across storage service and auth routes:
+  - Enforced RFC-compliant email regex validation (`is_valid_email`) and name sanitization with Unicode support and length limits (2–100 chars).
+  - Sanitized filenames via regex replacement (`re.sub(r'[^a-zA-Z0-9@._-]', '_', email)`).
+  - Added canonical path validation using `os.path.realpath` ensuring `real_path.startswith(base_path)`.
+- **Trade-off**: Additional validation overhead per request, but guarantees 100% protection against directory traversal attacks on a DB-less JSON storage setup.
