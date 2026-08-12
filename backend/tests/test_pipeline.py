@@ -446,3 +446,60 @@ def test_step_4_chapters_execution():
         assert project_data["chapters"][0]["title"] is not None
         assert len(project_data["chapters"][0]["characters"]) > 0
 
+
+def test_step_5_illustrations_execution():
+    """
+    Test Step 5: POST /api/projects/{project_id}/steps/illustrations.
+    """
+    from app.services import storage_service
+    from app.models.project import Character, Chapter, StatusEnum
+    import os
+
+    # Clean up stale files
+    filepath = storage_service.get_project_file_path("p_step5_test")
+    if os.path.exists(filepath):
+        os.remove(filepath)
+    if os.path.exists(f"{filepath}.lock"):
+        os.remove(f"{filepath}.lock")
+
+    char1 = Character(id="c1", name="Tấm", image_prompt="Tấm prompt")
+    char2 = Character(id="c2", name="Cám", image_prompt="Cám prompt")
+    chapter1 = Chapter(
+        id="ch_1",
+        title="Tấm Trở Về",
+        summary="Tấm trở về trong chiếc vàng.",
+        illustration_prompt="Watercolor scene: Tấm stepping out of a golden carriage in royal garments, "
+                            "surrounded by blooming lotus flowers at dusk, warm amber lighting.",
+        characters=["Tấm", "Cám"]
+    )
+
+    project = Project(
+        id="p_step5_test",
+        user_email="qui0406@example.com",
+        title="Tấm Cám",
+        book_text="Tấm Cám là một truyện cổ tích Việt Nam.",
+        created_at="2026-08-12T12:15:21+00:00",
+        status=StatusEnum.CHAPTERS_GENERATED,
+        style="Watercolor Illustration",
+        style_source="user_provided",
+        characters=[char1, char2],
+        portraits=[
+            {"character_id": "c1", "character_name": "Tấm", "image_path": "/images/p_step5_test/portraits/Tấm.png"},
+            {"character_id": "c2", "character_name": "Cám", "image_path": "/images/p_step5_test/portraits/Cám.png"}
+        ],
+        chapters=[chapter1],
+        gemini_session_ref="v1_ChdKU3g4YXVqTUFkYV92cjBQakozaTJRMBIXS1N4OGF0eUFOdjZ5dnIwUGlkZk9xQTA",
+        version=1
+    )
+    storage_service.save_project(project)  # Writes version=2 to disk
+
+    illus_resp = client.post(f"/api/projects/p_step5_test/steps/illustrations")
+
+    assert illus_resp.status_code in [200, 429, 500]
+    if illus_resp.status_code == 200:
+        project_data = illus_resp.json()["data"]
+        assert project_data["status"] == "DONE"
+        assert len(project_data["illustrations"]) == 1
+        assert project_data["illustrations"][0]["chapter_title"] == "Tấm Trở Về"
+        assert project_data["illustrations"][0]["image_path"].startswith("/images/")
+

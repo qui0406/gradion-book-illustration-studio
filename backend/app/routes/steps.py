@@ -453,3 +453,86 @@ async def execute_chapters_step(
             raise HTTPException(status_code=500, detail=f"Step 4 (Chapters) failed: {error_msg}")
 
 
+@router.post("/illustrations", response_model=Dict[str, Any])
+async def execute_illustrations_step(
+    project_id: str,
+    gemini_service: GeminiService = Depends(get_gemini_service)
+):
+    """
+    Step 5: Generate chapter illustrations using Gemini Imagen.
+    """
+    async with step_lock_manager.get_lock(project_id):
+        # === 1. LOAD PROJECT ===
+        project = storage_service.load_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        # === 2. VALIDATE STEP ===
+        if project.current_step != 5:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Step 5 is not the current step (current: {project.current_step})"
+            )
+
+        if project.status == StatusEnum.DONE:
+            raise HTTPException(status_code=400, detail="Project is already completed")
+
+        # === 3. VALIDATE PREREQUISITES ===
+        if not project.chapters or len(project.chapters) == 0:
+            raise HTTPException(status_code=400, detail="No chapters found. Please run Step 4 first.")
+
+        if not project.portraits or len(project.portraits) == 0:
+            raise HTTPException(status_code=400, detail="No portraits found. Please run Step 3 first.")
+
+        if not project.style:
+            raise HTTPException(status_code=400, detail="Style not found. Please run Step 1 first.")
+
+        if not project.gemini_session_ref:
+            raise HTTPException(status_code=400, detail="Gemini session not found. Please re-run Step 1.")
+
+        # === 4. VALIDATE EXECUTION LOCK ===
+        try:
+            validate_step_execution_lock(project, step=5, required_min_status=StatusEnum.CHAPTERS_GENERATED)
+        except StaleStepError as e:
+            handle_stale_step_exception(project, e)
+
+        # === 5. MARK AS RUNNING ===
+        mark_step_running(project)
+        logger.info(f"Step 5 started for project {project_id}")
+
+        # === 6. EXECUTE ===
+        try:
+            illustrations = gemini_service.generate_illustrations(
+                project_id=project_id,
+                chapters=project.chapters,
+                portraits=project.portraits,
+                style=project.style,
+                session_ref=project.gemini_session_ref
+            )
+
+            # Server-side enforcement: 1 illustration per chapter
+            if len(illustrations) != len(project.chapters):
+                raise RuntimeError(
+                    f"Illustration count mismatch: expected {len(project.chapters)}, got {len(illustrations)}"
+                )
+
+            # === 7. SAVE RESULTS ===
+            project.illustrations = illustrations
+
+            mark_step_complete(project, step=5, new_status=StatusEnum.DONE)
+            logger.info(f"Project {project_id} completed! {len(illustrations)} illustrations generated")
+            return {"data": project}
+
+        except Exception as e:
+            # === 8. ERROR HANDLING ===
+            mark_step_failed(project, str(e))
+            logger.error(f"Step 5 failed: {e}")
+            error_msg = str(e)
+            if "429" in error_msg or "quota" in error_msg.lower() or "too_many_requests" in error_msg.lower():
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Gemini API rate limit exceeded. Please wait and try again. Details: {error_msg}"
+                )
+            raise HTTPException(status_code=500, detail=f"Step 5 (Illustrations) failed: {error_msg}")
+
+

@@ -336,6 +336,87 @@ class GeminiService:
         logger.info(f"Extracted {len(chapters)} chapter(s) via Gemini")
         return chapters
 
+    # === STEP 5: GENERATE ILLUSTRATIONS ===
+    def generate_illustrations(
+        self,
+        project_id: str,
+        chapters: List[Chapter],
+        portraits: List[dict],
+        style: str,
+        session_ref: str
+    ) -> List[dict]:
+        """
+        Step 5: Generate a full scene illustration for each chapter.
+        Uses existing Gemini session (session_ref) — no re-upload of book.
+        Characters are referenced by name from portraits for prompt consistency.
+        """
+        system_instructions = """
+            There must be no text on the image, it should not look like a cover page.
+            It should be a full illustration with no borders, titles, nor description.
+            Stay family-friendly with uplifting colors.
+            Each produced should be a simple image, no panels.
+        """
+        illustrations = []
+
+        for chapter in chapters:
+            logger.info(f"Generating illustration for chapter: {chapter.title}")
+
+            # Build character reference list from portraits
+            char_refs = "\n".join(
+                f"- {p['character_name']}" for p in portraits
+            ) if portraits else "characters as described in the story"
+
+            prompt = f"""
+                Create a full scene illustration for this chapter.
+                Chapter: {chapter.title}
+                Scene description: {chapter.illustration_prompt}
+                Characters in this scene:
+                {char_refs}
+                Style: {style}
+                Rules: {system_instructions}
+            """
+
+            illustration_interaction = self.client.interactions.create(
+                model=self.image_model,
+                input=prompt.strip(),
+                previous_interaction_id=session_ref,
+            )
+
+            # Extract image from Gemini interaction steps
+            generated_image = None
+            for step_item in reversed(illustration_interaction.steps):
+                if step_item.type == "model_output" and step_item.content:
+                    for content_item in reversed(step_item.content):
+                        if content_item.type == "image":
+                            generated_image = content_item
+                            break
+                    if generated_image:
+                        break
+
+            if not generated_image:
+                raise RuntimeError(
+                    f"Gemini Imagen returned no image for chapter: {chapter.title}"
+                )
+
+            filename = f"{chapter.title}.png"
+            image_path = self._save_image(
+                project_id=project_id,
+                step="illustrations",
+                filename=filename,
+                image_data=generated_image.data
+            )
+
+            illustrations.append({
+                "chapter_id": chapter.id,
+                "chapter_title": chapter.title,
+                "image_path": image_path,
+                "generated_at": datetime.now(timezone.utc).isoformat()
+            })
+            logger.info(f"Illustration saved: {image_path}")
+
+        logger.info(f"Illustration generation completed: {len(illustrations)}/{len(chapters)}")
+        return illustrations
+
     def _save_image(self, project_id: str, step: str, filename: str, image_data: str) -> str:
         # Decode base64 image
         if isinstance(image_data, str):
