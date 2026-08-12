@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator
+
 
 
 class StatusEnum(str, Enum):
@@ -46,26 +47,46 @@ class Project(BaseModel):
     user_email: str
     title: str
     book_text: str
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    created_at: str
+    
+    # === PIPELINE STATE ===
     status: StatusEnum = StatusEnum.CREATED
+    current_step: int = Field(default=1, ge=1, le=5)  # ⬅️ THÊM DÒNG NÀY
     step_state: StepStateEnum = StepStateEnum.IDLE
     step_started_at: Optional[str] = None
     step_error: Optional[str] = None
+    
+    # === STEP 1 RESULTS ===
     style: Optional[str] = None
-    characters: List[Character] = Field(default_factory=list)
-    chapters: List[Chapter] = Field(default_factory=list)
-    gemini_session_ref: Optional[str] = None
-
+    style_source: Optional[str] = None
+    style_reasoning: Optional[str] = None
+    
+    # === STEP 2 RESULTS ===
+    characters: List[Character] = []
+    
+    # === STEP 3 RESULTS ===
+    portraits: List[Dict[str, Any]] = []  # [{character_name, image_path, image_data}]
+    
+    # === STEP 4 RESULTS ===
+    chapters: List[Chapter] = []
+    
+    # === STEP 5 RESULTS ===
+    illustrations: List[Dict[str, Any]] = []  # [{chapter_name, image_path}]
+    
+    # === GEMINI SESSION ===
+    gemini_session_ref: Optional[str] = None  # interaction_id
+    
+    # === VALIDATION ===
     @field_validator("characters")
     @classmethod
-    def validate_max_characters(cls, v: List[Character]) -> List[Character]:
+    def validate_characters(cls, v: List[Character]) -> List[Character]:
         if len(v) > 2:
-            raise ValueError("Maximum 2 adult characters allowed per project")
+            raise ValueError("Maximum 2 adult characters allowed")
         return v
-
+    
     @field_validator("chapters")
     @classmethod
-    def validate_max_chapters(cls, v: List[Chapter]) -> List[Chapter]:
+    def validate_chapters(cls, v: List[Chapter]) -> List[Chapter]:
         if len(v) > 1:
-            raise ValueError("Maximum 1 chapter allowed per project")
+            raise ValueError("Maximum 1 chapter allowed")
         return v

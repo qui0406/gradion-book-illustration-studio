@@ -46,3 +46,5 @@ I built this project using Cursor with Claude 3.5 Sonnet. Each decision below or
   - Sanitized filenames via regex replacement (`re.sub(r'[^a-zA-Z0-9@._-]', '_', email)`).
   - Added canonical path validation using `os.path.realpath` ensuring `real_path.startswith(base_path)`.
 - **Trade-off**: Additional validation overhead per request, but guarantees 100% protection against directory traversal attacks on a DB-less JSON storage setup.
+
+---

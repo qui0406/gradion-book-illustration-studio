@@ -3,6 +3,7 @@ Pipeline Integration & Auth API Tests.
 """
 
 import pytest
+from datetime import datetime, timezone, timedelta
 from fastapi.testclient import TestClient
 from app.main import app
 from app.models.project import Project, Character, Chapter
@@ -87,6 +88,55 @@ def test_create_and_get_project():
     assert any(p["id"] == project_id for p in projects)
 
 
+def test_create_project_from_file_upload(tmp_path):
+    """
+    Test POST /api/projects/upload for uploading .txt file.
+    """
+    test_file = tmp_path / "sample_story.txt"
+    test_file.write_text("Ngày xưa ở một vương quốc nọ có hai anh em dũng cảm...", encoding="utf-8")
+
+    with open(test_file, "rb") as f:
+        response = client.post(
+            "/api/projects/upload",
+            data={"user_email": "qui0406@example.com", "title": "Chuyện Cổ Tích"},
+            files={"file": ("sample_story.txt", f, "text/plain")}
+        )
+
+    assert response.status_code == 200
+    res_json = response.json()
+    assert "data" in res_json
+    data = res_json["data"]
+    assert data["title"] == "Chuyện Cổ Tích"
+    assert "Ngày xưa ở một vương quốc" in data["book_text"]
+
+
+def test_step_1_style_execution():
+    """
+    Test Step 1: POST /api/projects/{project_id}/steps/style.
+    """
+    payload = {
+        "user_email": "qui0406@example.com",
+        "title": "Chuyện Sơn Tinh Thủy Tinh",
+        "book_text": "Hùng Vương thứ mười tám có một người con gái tên là Mị Nương..."
+    }
+    create_resp = client.post("/api/projects", json=payload)
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["data"]["id"]
+
+    # Execute Step 1 Style with custom style choice
+    style_resp = client.post(
+        f"/api/projects/{project_id}/steps/style",
+        json={"style": "Watercolor Illustration"}
+    )
+    assert style_resp.status_code == 200
+    project_data = style_resp.json()["data"]
+    assert project_data["style"] == "Watercolor Illustration"
+    assert project_data["status"] == "STYLE_SET"
+    assert project_data["step_state"] == "IDLE"
+
+
+
+
 def test_project_character_limit_validation():
     """
     Test that Pydantic Project model enforces max 2 adult characters constraint.
@@ -101,6 +151,7 @@ def test_project_character_limit_validation():
         user_email="qui@example.com",
         title="Title",
         book_text="Content",
+        created_at="2026-08-12T12:15:21+00:00",
         characters=[char1, char2]
     )
     assert len(proj.characters) == 2
@@ -112,6 +163,7 @@ def test_project_character_limit_validation():
             user_email="qui@example.com",
             title="Title",
             book_text="Content",
+            created_at="2026-08-12T12:15:21+00:00",
             characters=[char1, char2, char3]
         )
 
@@ -129,6 +181,7 @@ def test_project_chapter_limit_validation():
         user_email="qui@example.com",
         title="Title",
         book_text="Content",
+        created_at="2026-08-12T12:15:21+00:00",
         chapters=[chap1]
     )
     assert len(proj.chapters) == 1
@@ -140,5 +193,45 @@ def test_project_chapter_limit_validation():
             user_email="qui@example.com",
             title="Title",
             book_text="Content",
+            created_at="2026-08-12T12:15:21+00:00",
             chapters=[chap1, chap2]
         )
+
+
+def test_stale_step_lock_reset():
+    """
+    Test that a step stale past the timeout threshold (e.g. > 300s) raises HTTPException,
+    catches StaleStepError, resets step_state to IDLE, and persists this reset to disk.
+    """
+    from fastapi import HTTPException
+    from app.routes.steps import execute_style_step
+    from app.models.project import StepStateEnum
+    from app.services import storage_service
+    import asyncio
+
+    # Setup stale project state (started 350 seconds ago, still RUNNING)
+    stale_started = (datetime.now(timezone.utc) - timedelta(seconds=350)).isoformat()
+    project = Project(
+        id="p_stale",
+        user_email="qui@example.com",
+        title="Title",
+        book_text="Content",
+        created_at="2026-08-12T12:15:21+00:00",
+        step_state=StepStateEnum.RUNNING,
+        step_started_at=stale_started
+    )
+    storage_service.save_project(project)
+
+    # Call step execution, should raise HTTPException 400 because of stale lock reset
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(execute_style_step("p_stale"))
+
+    assert exc_info.value.status_code == 400
+    assert "Previous execution was stale" in exc_info.value.detail
+
+    # Verify that the state was explicitly updated to IDLE and saved to disk
+    updated_proj = storage_service.load_project("p_stale")
+    assert updated_proj.step_state == StepStateEnum.IDLE
+    assert updated_proj.step_started_at is None
+    assert "Stale execution auto-reset" in updated_proj.step_error
+
