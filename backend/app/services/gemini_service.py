@@ -235,12 +235,10 @@ class GeminiService:
                         break
             
             if generated_image:
-                
-                filename = f"{character.name}.png"
                 image_path = self._save_image(
                     project_id=project_id,
                     step="portraits",
-                    filename=filename,
+                    entity_id=character.id,
                     image_data=generated_image.data
                 )
                 
@@ -361,7 +359,21 @@ class GeminiService:
         for chapter in chapters:
             logger.info(f"Generating illustration for chapter: {chapter.title}")
 
-            # Build character reference list from portraits
+            # Prepare input items for Gemini
+            input_items = []
+
+            # 1. Upload and attach portrait images
+            for p in portraits:
+                rel_path = p["image_path"].replace("/api/images/", "", 1)
+                local_path = os.path.join(IMAGES_DIR, rel_path)
+                try:
+                    p_file = self.client.files.upload(file=local_path)
+                    input_items.append({"type": "text", "text": f"Character reference for {p['character_name']}:"})
+                    input_items.append({"type": "image", "uri": p_file.uri})
+                except Exception as e:
+                    logger.warning(f"Could not upload portrait for {p.get('character_name')}: {e}")
+
+            # 2. Build character reference list from portraits for the text prompt
             char_refs = "\n".join(
                 f"- {p['character_name']}" for p in portraits
             ) if portraits else "characters as described in the story"
@@ -375,10 +387,11 @@ class GeminiService:
                 Style: {style}
                 Rules: {system_instructions}
             """
+            input_items.append({"type": "text", "text": prompt.strip()})
 
             illustration_interaction = self.client.interactions.create(
                 model=self.image_model,
-                input=prompt.strip(),
+                input=input_items,
                 previous_interaction_id=session_ref,
             )
 
@@ -398,11 +411,10 @@ class GeminiService:
                     f"Gemini Imagen returned no image for chapter: {chapter.title}"
                 )
 
-            filename = f"{chapter.title}.png"
             image_path = self._save_image(
                 project_id=project_id,
                 step="illustrations",
-                filename=filename,
+                entity_id=chapter.id,
                 image_data=generated_image.data
             )
 
@@ -417,7 +429,7 @@ class GeminiService:
         logger.info(f"Illustration generation completed: {len(illustrations)}/{len(chapters)}")
         return illustrations
 
-    def _save_image(self, project_id: str, step: str, filename: str, image_data: str) -> str:
+    def _save_image(self, project_id: str, step: str, entity_id: str, image_data: str) -> str:
         # Decode base64 image
         if isinstance(image_data, str):
             image_bytes = base64.b64decode(image_data)
@@ -432,6 +444,9 @@ class GeminiService:
         is_jpeg = image_bytes.startswith(b"\xff\xd8\xff")
         if not (is_png or is_jpeg):
             raise ValueError("Corrupt or invalid image format. Image must be a valid PNG or JPEG file.")
+            
+        extension = "png" if is_png else "jpg"
+        filename = f"{entity_id}.{extension}"
         
         # Create directory
         step_path = os.path.join(IMAGES_DIR, project_id, step)
@@ -443,4 +458,4 @@ class GeminiService:
             f.write(image_bytes)
         
         # Return URL path (for frontend to display)
-        return f"/images/{project_id}/{step}/{filename}"
+        return f"/api/images/{project_id}/{step}/{filename}"

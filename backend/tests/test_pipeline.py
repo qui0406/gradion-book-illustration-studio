@@ -195,7 +195,7 @@ def test_step_3_portraits_execution():
         assert len(project_data["portraits"]) > 0
 
         for port in project_data["portraits"]:
-            assert port["image_path"].startswith("/images/")
+            assert port["image_path"].startswith("/api/images/")
             
             # Test GET /api/images/{project_id}/portraits/{character_name}
             char_name = port["character_name"]
@@ -323,18 +323,18 @@ def test_image_validation():
 
     # Test size < 100
     with pytest.raises(ValueError, match="too small or empty"):
-        service._save_image("proj_test", "portraits", "test.png", b"small")
+        service._save_image("proj_test", "portraits", "entity_123", b"small")
 
     # Test incorrect headers (not PNG or JPEG)
     invalid_image_data = b"A" * 200  # 200 bytes, but no magic headers
     with pytest.raises(ValueError, match="must be a valid PNG or JPEG file"):
-        service._save_image("proj_test", "portraits", "test.png", invalid_image_data)
+        service._save_image("proj_test", "portraits", "entity_123", invalid_image_data)
 
     # Valid PNG header (should pass validation and return path)
     valid_png_data = b"\x89PNG\r\n\x1a\n" + b"A" * 100
     with patch("builtins.open", mock_open()):
-        path = service._save_image("proj_test", "portraits", "test.png", valid_png_data)
-        assert path == "/images/proj_test/portraits/test.png"
+        path = service._save_image("proj_test", "portraits", "entity_123", valid_png_data)
+        assert path == "/api/images/proj_test/portraits/entity_123.png"
 
 
 def test_optimistic_locking_conflict():
@@ -445,8 +445,8 @@ def test_step_4_chapters_execution():
         style_source="user_provided",
         characters=[char1, char2],
         portraits=[
-            {"character_id": "c1", "character_name": "Tấm", "image_path": "/images/p_step4_test/portraits/Tấm.png"},
-            {"character_id": "c2", "character_name": "Cám", "image_path": "/images/p_step4_test/portraits/Cám.png"}
+            {"character_id": "c1", "character_name": "Tấm", "image_path": "/api/images/p_step4_test/portraits/Tấm.png"},
+            {"character_id": "c2", "character_name": "Cám", "image_path": "/api/images/p_step4_test/portraits/Cám.png"}
         ],
         gemini_session_ref="v1_ChdKU3g4YXVqTUFkYV92cjBQakozaTJRMBIXS1N4OGF0eUFOdjZ5dnIwUGlkZk9xQTA",
         version=1
@@ -502,8 +502,8 @@ def test_step_5_illustrations_execution():
         style_source="user_provided",
         characters=[char1, char2],
         portraits=[
-            {"character_id": "c1", "character_name": "Tấm", "image_path": "/images/p_step5_test/portraits/Tấm.png"},
-            {"character_id": "c2", "character_name": "Cám", "image_path": "/images/p_step5_test/portraits/Cám.png"}
+            {"character_id": "c1", "character_name": "Tấm", "image_path": "/api/images/p_step5_test/portraits/Tấm.png"},
+            {"character_id": "c2", "character_name": "Cám", "image_path": "/api/images/p_step5_test/portraits/Cám.png"}
         ],
         chapters=[chapter1],
         gemini_session_ref="v1_ChdKU3g4YXVqTUFkYV92cjBQakozaTJRMBIXS1N4OGF0eUFOdjZ5dnIwUGlkZk9xQTA",
@@ -519,5 +519,5 @@ def test_step_5_illustrations_execution():
         assert project_data["status"] == "DONE"
         assert len(project_data["illustrations"]) == 1
         assert project_data["illustrations"][0]["chapter_title"] == "Tấm Trở Về"
-        assert project_data["illustrations"][0]["image_path"].startswith("/images/")
+        assert project_data["illustrations"][0]["image_path"].startswith("/api/images/")
 
