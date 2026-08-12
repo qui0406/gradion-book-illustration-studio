@@ -1,5 +1,5 @@
 # Constraints
 
-- Lock theo `projectId`: Đảm bảo mỗi dự án chỉ xử lý 1 tác vụ pipeline tại một thời điểm để tránh race conditions.
-- Không tin tưởng số lượng Gemini trả về: Backend phải tự kiểm tra, cắt bớt (truncate) hoặc từ chối nếu dữ liệu đầu ra từ Gemini vượt quá số lượng cho phép (tối đa 2 nhân vật, 1 chương).
-- Tránh Over-engineering: Ưu tiên thiết kế đơn giản, phẳng, lưu trữ dữ liệu dạng JSON file trực tiếp trên disk thay vì thiết lập CSDL phức tạp.
+- Lock by `projectId`: Ensure each project only executes one pipeline task at a time to prevent race conditions.
+- Do not trust output counts from Gemini: The backend must validate, truncate, or reject the response if Gemini's output exceeds the allowed limits (max 2 characters, 1 chapter).
+- Avoid Over-engineering: Prioritize simple, flat designs, saving data directly as JSON files on disk instead of setting up a complex database.

@@ -1,11 +1,11 @@
 # Project Context
 
-Mục tiêu dự án: Technical Assessment - Web app biến nội dung sách thành chân dung nhân vật + minh họa chương, dùng Gemini API, pipeline 5 bước: Style → Characters → Portraits → Chapters → Illustrations.
+Project Goal: Technical Assessment - Web app that transforms book content into character portraits + chapter illustrations using Gemini API. Pipeline consists of 5 steps: Style → Characters → Portraits → Chapters → Illustrations.
 
-Ràng buộc cứng:
-- Tối đa 2 nhân vật, tối đa 1 chương — validate ở BACKEND
-- Chỉ nhân vật người lớn (adult characters)
-- Gửi nội dung sách cho Gemini CHỈ 1 LẦN, tái dùng qua chat session/file reference
-- KHÔNG auto-retry Gemini call trong loop, chỉ user-triggered retry
-- Portraits/illustrations sinh TUẦN TỰ, ghi tiến độ ngay sau mỗi ảnh
-- Illustration phải dùng lại ảnh portrait làm input để giữ nhân vật nhất quán
+Hard Constraints:
+- Maximum of 2 characters and 1 chapter — validated at the BACKEND.
+- Adult characters only.
+- Send book content to Gemini ONLY ONCE; reuse it via chat session/file reference.
+- NO auto-retry of Gemini calls in a loop; only user-triggered retries.
+- Portraits and illustrations must be generated SEQUENTIALLY, recording progress immediately after each image is saved.
+- Illustrations must reuse the generated portrait images as input to maintain character consistency.

@@ -51,29 +51,69 @@ Alternatively, you can run them individually:
 ### Backend Pytest Results
 ```text
 ============================= test session starts ==============================
-platform darwin -- Python 3.13.7, pytest-9.1.1, pluggy-1.6.0
-rootdir: /Users/anhqui/Documents/gradion-book-illustration-studio/backend
+platform darwin -- Python 3.13.7, pytest-9.1.1, pluggy-1.6.0 -- /Users/anhqui/Documents/gradion-book-illustration-studio/backend/venv/bin/python3.13
+cachedir: .pytest_cache
+rootdir: /Users/anhqui/Documents/gradion-book-illustration-studio copy/backend
 plugins: anyio-4.14.2
-collected 16 items
+collecting ... collected 16 items
 
-tests/test_pipeline.py ................                                  [100%]
+tests/test_pipeline.py::test_health_check PASSED                         [  6%]
+tests/test_pipeline.py::test_auth_signin_and_me PASSED                   [ 12%]
+tests/test_pipeline.py::test_security_email_and_path_traversal_validation PASSED [ 18%]
+tests/test_pipeline.py::test_create_and_get_project PASSED               [ 25%]
+tests/test_pipeline.py::test_create_project_from_file_upload PASSED      [ 31%]
+tests/test_pipeline.py::test_step_1_style_execution PASSED               [ 37%]
+tests/test_pipeline.py::test_step_2_characters_execution PASSED          [ 43%]
+tests/test_pipeline.py::test_step_3_portraits_execution PASSED           [ 50%]
+tests/test_pipeline.py::test_project_character_limit_validation PASSED   [ 56%]
+tests/test_pipeline.py::test_project_chapter_limit_validation PASSED     [ 62%]
+tests/test_pipeline.py::test_stale_step_lock_reset PASSED                [ 68%]
+tests/test_pipeline.py::test_image_validation PASSED                     [ 75%]
+tests/test_pipeline.py::test_optimistic_locking_conflict PASSED          [ 81%]
+tests/test_pipeline.py::test_step_concurrency_lock PASSED                [ 87%]
+tests/test_pipeline.py::test_step_4_chapters_execution PASSED            [ 93%]
+tests/test_pipeline.py::test_step_5_illustrations_execution PASSED       [100%]
 
-=========================== 16 passed in 12.50s ================================
+======================== 16 passed in 186.86s (0:03:06) ========================
 ```
 
 ### Frontend Vitest Results
 ```text
- RUN  v1.75.0 /Users/anhqui/Documents/gradion-book-illustration-studio/frontend
+> frontend@0.0.0 test
+> vitest run
 
- ✓ src/test/components.test.jsx (3 tests) 38ms
-   ✓ Navbar Component (2 tests)
-     ✓ renders brand and navigation links correctly
-     ✓ triggers logout and redirects to auth page
-   ✓ Footer Component (1 test)
-     ✓ renders Gradion branding and terms links
+
+ RUN  v4.1.10 /Users/anhqui/Documents/gradion-book-illustration-studio copy/frontend
+
+ ✓ src/test/components.test.jsx (10 tests) 103ms
 
  Test Files  1 passed (1)
-      Tests  3 passed (3)
-   Start at  20:00:21
-   Duration  280ms (transform 120ms, setup 18ms)
+      Tests  10 passed (10)
+   Start at  23:22:26
+   Duration  830ms (transform 57ms, setup 89ms, import 88ms, tests 103ms, environment 480ms)
 ```
+
+---
+
+## 5. Rationale for Selected Frontend Test Targets
+
+To comply with the instruction *"Pick a couple that matter; don't test everything"*, we selected specific critical components and UI states while deliberately omitting others.
+
+### Why We Tested These Components & States
+1. **`ProjectList` Component & its UI States (`Loading`, `Empty`, `Success`, `Error`)**:
+   - **Loading State**: Ensures a proper loading indicator is shown while projects are fetching, preventing the user from seeing an empty screen or duplicate buttons.
+   - **Empty State**: Vital for onboarding. When a user has 0 projects, it must render a helpful message directing them to create a new project.
+   - **Success State**: Confirms that when projects exist, their cards are rendered with correct metadata and progressive step bars (e.g., "Step 5 of 5").
+   - **Error State**: Verifies the application handles network or server crashes gracefully by rendering an inline error alert instead of crashing the UI.
+2. **`Navbar` Component & its Session States (`Initials`, `User Name`, `Sign Out`)**:
+   - **Initials & Name Display**: Confirms the user's details are retrieved correctly from the Auth Context and their avatar initials are parsed dynamically.
+   - **Sign Out Flow**: A critical action that clears local storage authentication keys (`gradion_user`) and navigates back to the `/auth` page, preventing unauthenticated access.
+3. **`EntityCard` Component & its Pipeline Generation States (`Not generated yet`, `Generating/Loading`, `Image loaded`)**:
+   - **Not generated yet**: Verifies the card correctly renders the placeholder text ("Not generated yet") and item name/prompt before API runs.
+   - **Generating/Loading State**: Ensures the card displays a dynamic loading spinner (`.gd-spinner`) and step-specific messages (e.g. "Generating portrait for Tấm..." vs "Generating illustration...") while the backend generates assets asynchronously.
+   - **Success/Image loaded**: Confirms the card renders the correct HTML `<img>` tag and routes the sanitized path dynamically.
+
+### Why We Did Not Test Other Components
+- **`Footer`**: Contains only static informational links with zero dynamic state or business logic. Testing it would create high maintenance overhead with no actual reliability gain.
+- **Project Detail Panels, Steppers & Forms**: Their workflows and state constraints (such as preventing duplicate executions, enforcing sequential steps, and validation limits) are already thoroughly covered by our 16 backend integration tests. Writing frontend unit tests for them would duplicate test cases already validated at the API layer.
+

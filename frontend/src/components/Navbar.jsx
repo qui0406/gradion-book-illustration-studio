@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import gradionLogo from '../assets/gradion-logo.png';
 
 export default function Navbar() {
   const { user, signOut } = useAuth();
@@ -26,7 +27,7 @@ export default function Navbar() {
           tabIndex={0}
           onKeyDown={e => e.key === 'Enter' && navigate('/')}
         >
-          Gradion
+          <img src={gradionLogo} alt="Gradion" style={{ height: 22, display: 'block' }} />
         </span>
 
         <div className="gd-nav-links">

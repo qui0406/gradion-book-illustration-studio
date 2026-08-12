@@ -76,8 +76,42 @@ I built this project using Cursor with Claude 3.5 Sonnet. Each decision below or
 
 ---
 
+## 7. Short Polling vs. WebSockets & Unblocking the Event Loop (AI Proposal Rejected #4)
+
+- **Context & AI Proposal**: Claude initially suggested setting up WebSockets to stream real-time progress updates from the backend to the frontend (e.g. as individual portraits or illustrations finish).
+- **My Challenge / Rejection**: I rejected WebSockets. Setting up stateful WebSocket connections adds significant architectural complexity (managing connection lifecycles, authentication over WS, automatic reconnection logic, and scaling stateful servers) for an application whose database is a stateless set of JSON files on disk. Polling is simple, stateless, automatically recovers from network drops, and fits our file-based database perfectly.
+- **The Bug We Caught**: When we tested the polling implementation, we realized that during long-running generation steps (which took 15-30s), all polling requests (`GET /api/projects/{id}`) and navigation requests on the frontend would **hang indefinitely** showing a loading spinner. The AI had implemented the route handlers as `async def` but executed the heavy LLM/image generation calls synchronously, blocking FastAPI's single-threaded event loop.
+- **Final Decision**: We kept the stateless Short Polling mechanism (`useProjectPolling` polling every 2-2.5s) but resolved the event loop hang on the backend:
+  - Delegated all 5 blocking generation steps in `steps.py` to a background threadpool using `await asyncio.to_thread(...)`.
+  - This immediately unblocks FastAPI's main thread, allowing the backend to process concurrent polling requests and frontend navigation immediately while generation runs in the background.
+- **Trade-off**: Polling creates slightly more HTTP network overhead than a persistent WebSocket, but it is extremely simple, robust, stateless, and 100% responsive.
+
+---
+
 ## If you had one more day, what would you build next and why?
 
-If I had one more day, I would build **Real-Time Step Updates using Server-Sent Events (SSE)**.
+If I had one more day, I would build two things:
+
+### A. Real-Time Step Updates using Server-Sent Events (SSE)
+
 Currently, the frontend uses short-polling (every 2.5 seconds) to fetch the latest project state while steps are `RUNNING`. This creates extra network overhead and introduces up to 2.5 seconds of lag between a step's backend completion and the frontend UI update. By implementing SSE, the backend could push updates instantly (e.g., when a single portrait is saved) to the frontend. This would make the step transitions feel incredibly fast, responsive, and fluid, improving the UX without loading the server with repetitive poll requests. Additionally, I would add a **retry attempt history log** to the UI, allowing the user to view past rate-limiting failures or timeouts, enhancing the auditability of the pipeline.
 
+---
+
+### B. Full End-to-End Integration Test Suite
+
+The existing test suite in `backend/tests/test_pipeline.py` covers each pipeline step **individually**, seeding pre-built project fixtures to test a single step in isolation. What's missing is a true **end-to-end integration test** that walks through the entire 5-step pipeline from scratch — from project creation to final illustration — validating the full data flow and state transitions in one continuous test run.
+
+#### Backend: `test_full_pipeline_e2e`
+
+I would add a single test function `test_full_pipeline_e2e` in `backend/tests/test_pipeline.py` that:
+
+1. **Creates** a project via `POST /api/projects` and asserts `status == CREATED`.
+2. **Runs Step 1 (Style)** via `POST /api/projects/{id}/steps/style` and asserts `status == STYLE_SET`.
+3. **Runs Step 2 (Characters)** and asserts `status == CHARACTERS_GENERATED`, `len(characters) <= 2`, and each character has a non-empty `image_prompt`.
+4. **Runs Step 3 (Portraits)** and asserts `status == PORTRAITS_GENERATED`, `len(portraits) == len(characters)`, and each portrait has a valid `/images/...` path that returns `200 image/png` from `GET /api/images/{id}/portraits/{name}`.
+5. **Runs Step 4 (Chapters)** and asserts `status == CHAPTERS_GENERATED`, `len(chapters) == 1`, and the chapter has at least one character reference.
+6. **Runs Step 5 (Illustrations)** and asserts `status == DONE`, `len(illustrations) == 1`, and the illustration `image_path` serves a valid PNG.
+7. **Cleans up** by deleting the generated project file from disk after the test.
+
+This test serves as a **smoke test for the entire generation pipeline** and would catch cross-step data contract bugs (e.g., Step 4 expecting `portraits` populated by Step 3) that individual step tests cannot catch in isolation.

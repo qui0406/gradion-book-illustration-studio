@@ -4,7 +4,11 @@ set -e
 
 echo "=== Running Backend Tests (pytest) ==="
 cd backend
-source venv/bin/activate
+if [ -d "venv/Scripts" ]; then
+  source venv/Scripts/activate
+else
+  source venv/bin/activate
+fi
 pytest
 cd ..
 

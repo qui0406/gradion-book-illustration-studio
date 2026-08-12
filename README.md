@@ -28,8 +28,22 @@ To initialize the project for local development:
 2. Setup the backend virtualenv:
    ```bash
    cd backend
+   # On macOS/Linux:
    python3 -m venv venv
    source venv/bin/activate
+
+   # On Windows (Command Prompt / cmd.exe):
+   # python -m venv venv
+   # venv\Scripts\activate
+
+   # On Windows (PowerShell):
+   # python -m venv venv
+   # .\venv\Scripts\Activate.ps1
+
+   # On Windows (Git Bash):
+   # python -m venv venv
+   # source venv/Scripts/activate
+
    pip install -r requirements.txt
    cd ..
    ```

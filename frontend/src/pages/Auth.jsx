@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import API from '../api/projects';
 import Footer from '../components/Footer';
+import gradionLogo from '../assets/gradion-logo.png';
 
 export default function Auth() {
   const { signIn } = useAuth();
@@ -45,7 +46,9 @@ export default function Auth() {
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'var(--bg-3)' }}>
       <div className="center-page" style={{ flex: 1 }}>
         <div className="auth-card">
-          <div className="auth-card-brand">Gradion</div>
+          <div className="auth-card-brand">
+            <img src={gradionLogo} alt="Gradion" style={{ height: 28 }} />
+          </div>
           <h2>Book Illustration Studio</h2>
           <p className="lede">Enter your details to start or resume an illustration project.</p>
 

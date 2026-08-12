@@ -76,7 +76,7 @@ function Stepper({ project }) {
 }
 
 // ─── Entity Card ──────────────────────────────────────────────────────────────
-function EntityCard({ name, prompt, imagePath, isGenerating, isChapter, index }) {
+export function EntityCard({ name, prompt, imagePath, isGenerating, isChapter, index }) {
   const hasImage = Boolean(imagePath);
   const artCls   = `entity-card-art${isChapter ? ' chapter' : ''}${!hasImage ? ' pending' : ''}`;
 

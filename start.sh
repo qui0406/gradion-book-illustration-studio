@@ -16,7 +16,11 @@ echo "Starting Gradion Book Illustration Studio..."
 # Start Backend
 echo "Starting Backend (FastAPI)..."
 cd backend
-source venv/bin/activate
+if [ -d "venv/Scripts" ]; then
+  source venv/Scripts/activate
+else
+  source venv/bin/activate
+fi
 uvicorn app.main:app --reload --port 8000 &
 BACKEND_PID=$!
 cd ..
