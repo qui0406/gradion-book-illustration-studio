@@ -183,10 +183,6 @@ class GeminiService:
                            style: str, session_ref: str) -> List[dict]:
         """
         Step 3: Generate character portraits sequentially.
-        
-        ⚠️ KNOWN ISSUE: Không validate image trước khi lưu.
-        Nếu image bị corrupt hoặc quá nhỏ, vẫn lưu vào disk.
-        Sẽ fix ở phần sau.
         """
         system_instructions = """
             There must be no text on the image, it should not look like a cover page.
@@ -233,11 +229,6 @@ class GeminiService:
                         break
             
             if generated_image:
-                # ⚠️ LỖ HỔNG: Không validate image trước khi lưu
-                # - Không kiểm tra kích thước
-                # - Không kiểm tra image có bị corrupt không
-                # - Không kiểm tra định dạng
-                # → Có thể lưu ảnh lỗi vào disk!
                 
                 filename = f"{character.name}.png"
                 image_path = self._save_image(
@@ -255,9 +246,8 @@ class GeminiService:
                 })
                 logger.info(f"✅ Portrait saved: {image_path}")
             else:
-                logger.error(f"❌ No image generated for {character.name}")
-                # ⚠️ LỖ HỔNG: Không raise exception, vẫn tiếp tục với character tiếp theo
-                # → User không biết character nào bị lỗi
+                logger.error(f"No image generated for {character.name}")
+                raise RuntimeError(f"Gemini Imagen failed to generate a portrait image for character: {character.name}")
             
             last_interaction_id = portrait_interaction.id
         
@@ -265,20 +255,20 @@ class GeminiService:
         return portraits
     
     def _save_image(self, project_id: str, step: str, filename: str, image_data: str) -> str:
-        """Save image to disk and return URL path.
-        
-        ⚠️ KNOWN ISSUE: Không validate image trước khi lưu.
-        """
         # Decode base64 image
         if isinstance(image_data, str):
             image_bytes = base64.b64decode(image_data)
         else:
             image_bytes = image_data
         
-        # ⚠️ LỖ HỔNG: Không kiểm tra image_bytes có hợp lệ không
-        # - Không kiểm tra len(image_bytes) > 0
-        # - Không kiểm tra image có đúng định dạng PNG không
-        # - Không kiểm tra image có bị corrupt không
+        # === VALIDATE IMAGE BYTES ===
+        if not image_bytes or len(image_bytes) < 100:
+            raise ValueError(f"Generated image is too small or empty ({len(image_bytes) if image_bytes else 0} bytes)")
+        
+        is_png = image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+        is_jpeg = image_bytes.startswith(b"\xff\xd8\xff")
+        if not (is_png or is_jpeg):
+            raise ValueError("Corrupt or invalid image format. Image must be a valid PNG or JPEG file.")
         
         # Create directory
         step_path = os.path.join(IMAGES_DIR, project_id, step)

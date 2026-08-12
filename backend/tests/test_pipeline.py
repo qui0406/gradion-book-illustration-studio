@@ -123,7 +123,6 @@ def test_step_1_style_execution():
     assert create_resp.status_code == 200
     project_id = create_resp.json()["data"]["id"]
 
-    # Execute Step 1 Style with custom style choice
     style_resp = client.post(
         f"/api/projects/{project_id}/steps/style",
         json={"style": "Watercolor Illustration"}
@@ -294,4 +293,106 @@ def test_stale_step_lock_reset():
     assert updated_proj.step_state == StepStateEnum.IDLE
     assert updated_proj.step_started_at is None
     assert "Stale execution auto-reset" in updated_proj.step_error
+
+
+def test_image_validation():
+    """
+    Test that _save_image raises ValueError for size < 100 or incorrect formats.
+    """
+    from app.services.gemini_service import GeminiService
+    from unittest.mock import patch, mock_open
+    service = GeminiService()
+
+    # Test size < 100
+    with pytest.raises(ValueError, match="too small or empty"):
+        service._save_image("proj_test", "portraits", "test.png", b"small")
+
+    # Test incorrect headers (not PNG or JPEG)
+    invalid_image_data = b"A" * 200  # 200 bytes, but no magic headers
+    with pytest.raises(ValueError, match="must be a valid PNG or JPEG file"):
+        service._save_image("proj_test", "portraits", "test.png", invalid_image_data)
+
+    # Valid PNG header (should pass validation and return path)
+    valid_png_data = b"\x89PNG\r\n\x1a\n" + b"A" * 100
+    with patch("builtins.open", mock_open()):
+        path = service._save_image("proj_test", "portraits", "test.png", valid_png_data)
+        assert path == "/images/proj_test/portraits/test.png"
+
+
+def test_optimistic_locking_conflict():
+    """
+    Test that saving a project with an outdated version raises HTTP 409 conflict.
+    """
+    from fastapi import HTTPException
+    from app.services import storage_service
+    import os
+    
+    # Clean up stale files from previous runs
+    filepath = storage_service.get_project_file_path("p_opt_lock")
+    if os.path.exists(filepath):
+        os.remove(filepath)
+    if os.path.exists(f"{filepath}.lock"):
+        os.remove(f"{filepath}.lock")
+    
+    # Save a fresh project
+    project = Project(
+        id="p_opt_lock",
+        user_email="qui@example.com",
+        title="Title",
+        book_text="Content",
+        created_at="2026-08-12T12:15:21+00:00",
+        version=1
+    )
+    storage_service.save_project(project)  # Writes version=2 to disk
+    
+    # Load two concurrent copies
+    p1 = storage_service.load_project("p_opt_lock")  # version=2
+    p2 = storage_service.load_project("p_opt_lock")  # version=2
+    
+    assert p1.version == 2
+    assert p2.version == 2
+    
+    # Save p1 -> increments version on disk to 3
+    storage_service.save_project(p1)
+    
+    # Try to save p2 (with outdated version 2, while disk has version 3) -> should raise 409
+    with pytest.raises(HTTPException) as exc_info:
+        storage_service.save_project(p2)
+        
+    assert exc_info.value.status_code == 409
+    assert "modified by another request" in exc_info.value.detail
+
+
+def test_step_concurrency_lock():
+    """
+    Test that calling a step on a project that is already executing (RUNNING) raises HTTP 409.
+    """
+    from app.services import storage_service
+    from app.models.project import StepStateEnum
+    import os
+    
+    # Clean up stale files from previous runs
+    filepath = storage_service.get_project_file_path("p_concurrency")
+    if os.path.exists(filepath):
+        os.remove(filepath)
+    if os.path.exists(f"{filepath}.lock"):
+        os.remove(f"{filepath}.lock")
+    
+    # Create a project currently executing (RUNNING) within the timeout window
+    recent_started = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+    project = Project(
+        id="p_concurrency",
+        user_email="qui@example.com",
+        title="Title",
+        book_text="Content",
+        created_at="2026-08-12T12:15:21+00:00",
+        step_state=StepStateEnum.RUNNING,
+        step_started_at=recent_started
+    )
+    storage_service.save_project(project)
+    
+    # Attempt duplicate call through route (Step 1) -> should fail with 409 Conflict
+    resp = client.post(f"/api/projects/p_concurrency/steps/style", json={"style": "Watercolor"})
+    assert resp.status_code == 409
+    assert "Duplicate request blocked" in resp.json()["detail"]
 

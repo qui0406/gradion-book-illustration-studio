@@ -55,6 +55,7 @@ class Project(BaseModel):
     step_state: StepStateEnum = StepStateEnum.IDLE
     step_started_at: Optional[str] = None
     step_error: Optional[str] = None
+    version: int = 1
     
     # === STEP 1 RESULTS ===
     style: Optional[str] = None

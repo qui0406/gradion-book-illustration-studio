@@ -95,8 +95,25 @@ def get_project_file_path(project_id: str) -> str:
 def save_project(project: Project) -> Project:
     file_path = get_project_file_path(project.id)
     lock_path = f"{file_path}.lock"
-    project_dict = project.model_dump()
+    
     with FileLock(lock_path):
+        if os.path.exists(file_path):
+            with open(file_path, "r", encoding="utf-8") as f:
+                try:
+                    data = json.load(f)
+                    current_version = data.get("version", 1)
+                    if current_version != project.version:
+                        from fastapi import HTTPException
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Project was modified by another request. Please retry."
+                        )
+                except Exception as e:
+                    if isinstance(e, HTTPException):
+                        raise e
+        
+        project.version += 1
+        project_dict = project.model_dump()
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(project_dict, f, ensure_ascii=False, indent=2)
 

@@ -12,6 +12,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 from app.services.gemini_service import GeminiService
+from app.utils.locks import step_lock_manager
 
 def get_gemini_service():
     return GeminiService()
@@ -166,58 +167,58 @@ def mark_step_failed(project: Project, error: str) -> None:
 @router.post("/style", response_model=Dict[str, Any])
 async def execute_style_step(project_id: str, req: Optional[StyleStepRequest] = None, 
                                 gemini_service: GeminiService = Depends(get_gemini_service)):
-    # === 1. LOAD PROJECT ===
-    project = storage_service.load_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    
-    # === 2. VALIDATE STEP ===
-    if project.current_step != 1:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Step 1 is not the current step (current: {project.current_step})"
-        )
-    
-    if project.status == StatusEnum.DONE:
-        raise HTTPException(
-            status_code=400,
-            detail="Project is already completed"
-        )
-    
-
-    # === 3. VALIDATE EXECUTION LOCK ===
-    try:
-        validate_step_execution_lock(project, step=1, required_min_status=None)
-    except StaleStepError as e:
-        handle_stale_step_exception(project, e)
-
-    # === 4. GET USER INPUT ===
-    custom_style = req.style if req and req.style else None
-
-    # === 5. MARK AS RUNNING ===
-    mark_step_running(project)
-
-    # === 6. EXECUTE ===
-    try:
-        selected_style, source, session_ref = gemini_service.extract_art_style(
-            project.book_text, custom_style, project.id
-        )
-
-        if not selected_style or not selected_style.strip():
-            raise ValueError("Extracted art style is empty or invalid")
-
-        # === 7. SAVE RESULTS ===
-        project.style = selected_style
-        project.style_source = source
-        project.gemini_session_ref = session_ref
+    async with step_lock_manager.get_lock(project_id):
+        # === 1. LOAD PROJECT ===
+        project = storage_service.load_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
         
-        mark_step_complete(project, step=1, new_status=StatusEnum.STYLE_SET)
-        return {"data": project}
+        # === 2. VALIDATE STEP ===
+        if project.current_step != 1:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Step 1 is not the current step (current: {project.current_step})"
+            )
+        
+        if project.status == StatusEnum.DONE:
+            raise HTTPException(
+                status_code=400,
+                detail="Project is already completed"
+            )
+        
+        # === 3. VALIDATE EXECUTION LOCK ===
+        try:
+            validate_step_execution_lock(project, step=1, required_min_status=None)
+        except StaleStepError as e:
+            handle_stale_step_exception(project, e)
 
-    except Exception as e:
-        # === 8. ERROR HANDLING ===
-        mark_step_failed(project, str(e))
-        raise HTTPException(status_code=500, detail=f"Step 1 (Style) failed: {str(e)}")
+        # === 4. GET USER INPUT ===
+        custom_style = req.style if req and req.style else None
+
+        # === 5. MARK AS RUNNING ===
+        mark_step_running(project)
+
+        # === 6. EXECUTE ===
+        try:
+            selected_style, source, session_ref = gemini_service.extract_art_style(
+                project.book_text, custom_style, project.id
+            )
+
+            if not selected_style or not selected_style.strip():
+                raise ValueError("Extracted art style is empty or invalid")
+
+            # === 7. SAVE RESULTS ===
+            project.style = selected_style
+            project.style_source = source
+            project.gemini_session_ref = session_ref
+            
+            mark_step_complete(project, step=1, new_status=StatusEnum.STYLE_SET)
+            return {"data": project}
+
+        except Exception as e:
+            # === 8. ERROR HANDLING ===
+            mark_step_failed(project, str(e))
+            raise HTTPException(status_code=500, detail=f"Step 1 (Style) failed: {str(e)}")
 
 
 @router.post("/characters", response_model=Dict[str, Any])
@@ -228,64 +229,65 @@ async def execute_characters_step(
     """
     Step 2: Extract main adult characters (max 2).
     """
-    # === 1. LOAD PROJECT ===
-    project = storage_service.load_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    
-    # === 2. VALIDATE STEP ===
-    if project.current_step != 2:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Step 2 is not the current step (current: {project.current_step})"
-        )
-    
-    if project.status == StatusEnum.DONE:
-        raise HTTPException(status_code=400, detail="Project is already completed")
-    
-    # === 3. VALIDATE PREREQUISITES ===
-    if not project.style:
-        raise HTTPException(status_code=400, detail="Style must be set first (Step 1)")
-    
-    if not project.gemini_session_ref:
-        raise HTTPException(
-            status_code=400, 
-            detail="Gemini session not found. Please re-run Step 1."
-        )
-    
-    # === 4. VALIDATE EXECUTION LOCK ===
-    try:
-        validate_step_execution_lock(project, step=2, required_min_status=StatusEnum.STYLE_SET)
-    except StaleStepError as e:
-        handle_stale_step_exception(project, e)
-    
-    # === 5. MARK AS RUNNING ===
-    mark_step_running(project)
-    
-    # === 6. EXECUTE ===
-    try:
-        characters = gemini_service.extract_characters(
-            session_ref=project.gemini_session_ref,
-            style=project.style
-        )
+    async with step_lock_manager.get_lock(project_id):
+        # === 1. LOAD PROJECT ===
+        project = storage_service.load_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
         
-        # Server-side enforcement: max 2 characters
-        if len(characters) > 2:
-            characters = characters[:2]
-            logger.warning(f"Extracted {len(characters)} characters, truncated to 2")
+        # === 2. VALIDATE STEP ===
+        if project.current_step != 2:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Step 2 is not the current step (current: {project.current_step})"
+            )
         
-        # === 7. SAVE RESULTS ===
-        project.characters = characters
+        if project.status == StatusEnum.DONE:
+            raise HTTPException(status_code=400, detail="Project is already completed")
         
-        mark_step_complete(project, step=2, new_status=StatusEnum.CHARACTERS_GENERATED)
-        logger.info(f"Step 2 completed for project {project_id}: {len(characters)} characters extracted")
-        return {"data": project}
-    
-    except Exception as e:
-        # === 8. ERROR HANDLING ===
-        mark_step_failed(project, str(e))
-        logger.error(f"Step 2 failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Step 2 (Characters) failed: {str(e)}")
+        # === 3. VALIDATE PREREQUISITES ===
+        if not project.style:
+            raise HTTPException(status_code=400, detail="Style must be set first (Step 1)")
+        
+        if not project.gemini_session_ref:
+            raise HTTPException(
+                status_code=400, 
+                detail="Gemini session not found. Please re-run Step 1."
+            )
+        
+        # === 4. VALIDATE EXECUTION LOCK ===
+        try:
+            validate_step_execution_lock(project, step=2, required_min_status=StatusEnum.STYLE_SET)
+        except StaleStepError as e:
+            handle_stale_step_exception(project, e)
+        
+        # === 5. MARK AS RUNNING ===
+        mark_step_running(project)
+        
+        # === 6. EXECUTE ===
+        try:
+            characters = gemini_service.extract_characters(
+                session_ref=project.gemini_session_ref,
+                style=project.style
+            )
+            
+            # Server-side enforcement: max 2 characters
+            if len(characters) > 2:
+                characters = characters[:2]
+                logger.warning(f"Extracted {len(characters)} characters, truncated to 2")
+            
+            # === 7. SAVE RESULTS ===
+            project.characters = characters
+            
+            mark_step_complete(project, step=2, new_status=StatusEnum.CHARACTERS_GENERATED)
+            logger.info(f"Step 2 completed for project {project_id}: {len(characters)} characters extracted")
+            return {"data": project}
+        
+        except Exception as e:
+            # === 8. ERROR HANDLING ===
+            mark_step_failed(project, str(e))
+            logger.error(f"Step 2 failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Step 2 (Characters) failed: {str(e)}")
 
 
 @router.post("/portraits", response_model=Dict[str, Any])
@@ -296,67 +298,74 @@ async def execute_portraits_step(
     """
     Step 3: Generate character portraits sequentially.
     """
-    # === 1. LOAD PROJECT ===
-    project = storage_service.load_project(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    
-    # === 2. VALIDATE STEP ===
-    if project.current_step != 3:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Step 3 is not the current step (current: {project.current_step})"
-        )
-    
-    if project.status == StatusEnum.DONE:
-        raise HTTPException(status_code=400, detail="Project is already completed")
-    
-    # === 3. VALIDATE PREREQUISITES ===
-    if not project.characters or len(project.characters) == 0:
-        raise HTTPException(
-            status_code=400, 
-            detail="No characters found. Please run Step 2 first."
-        )
-    
-    if not project.style:
-        raise HTTPException(status_code=400, detail="Style not found. Please run Step 1 first.")
-    
-    if not project.gemini_session_ref:
-        raise HTTPException(
-            status_code=400, 
-            detail="Gemini session not found. Please re-run Step 1."
-        )
-    
-    # === 4. VALIDATE EXECUTION LOCK ===
-    try:
-        validate_step_execution_lock(project, step=3, required_min_status=StatusEnum.CHARACTERS_GENERATED)
-    except StaleStepError as e:
-        handle_stale_step_exception(project, e)
-    
-    # === 5. MARK AS RUNNING ===
-    mark_step_running(project)
-    logger.info(f"Step 3 started for project {project_id}")
-    
-    # === 6. EXECUTE ===
-    try:
-        portraits = gemini_service.generate_portraits(
-            project_id=project_id,
-            characters=project.characters,
-            style=project.style,
-            session_ref=project.gemini_session_ref
-        )
+    async with step_lock_manager.get_lock(project_id):
+        # === 1. LOAD PROJECT ===
+        project = storage_service.load_project(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
         
-        # === 7. SAVE RESULTS ===
-        project.portraits = portraits
+        # === 2. VALIDATE STEP ===
+        if project.current_step != 3:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Step 3 is not the current step (current: {project.current_step})"
+            )
         
-        mark_step_complete(project, step=3, new_status=StatusEnum.PORTRAITS_GENERATED)
-        logger.info(f"Step 3 completed: {len(portraits)} portraits generated")
-        return {"data": project}
-    
-    except Exception as e:
-        # === 8. ERROR HANDLING ===
-        mark_step_failed(project, str(e))
-        logger.error(f"Step 3 failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Step 3 (Portraits) failed: {str(e)}")
+        if project.status == StatusEnum.DONE:
+            raise HTTPException(status_code=400, detail="Project is already completed")
+        
+        # === 3. VALIDATE PREREQUISITES ===
+        if not project.characters or len(project.characters) == 0:
+            raise HTTPException(
+                status_code=400, 
+                detail="No characters found. Please run Step 2 first."
+            )
+        
+        if not project.style:
+            raise HTTPException(status_code=400, detail="Style not found. Please run Step 1 first.")
+        
+        if not project.gemini_session_ref:
+            raise HTTPException(
+                status_code=400, 
+                detail="Gemini session not found. Please re-run Step 1."
+            )
+        
+        # === 4. VALIDATE EXECUTION LOCK ===
+        try:
+            validate_step_execution_lock(project, step=3, required_min_status=StatusEnum.CHARACTERS_GENERATED)
+        except StaleStepError as e:
+            handle_stale_step_exception(project, e)
+        
+        # === 5. MARK AS RUNNING ===
+        mark_step_running(project)
+        logger.info(f"Step 3 started for project {project_id}")
+        
+        # === 6. EXECUTE ===
+        try:
+            portraits = gemini_service.generate_portraits(
+                project_id=project_id,
+                characters=project.characters,
+                style=project.style,
+                session_ref=project.gemini_session_ref
+            )
+            
+            # === 7. SAVE RESULTS ===
+            project.portraits = portraits
+            
+            mark_step_complete(project, step=3, new_status=StatusEnum.PORTRAITS_GENERATED)
+            logger.info(f"Step 3 completed: {len(portraits)} portraits generated")
+            return {"data": project}
+        
+        except Exception as e:
+            # === 8. ERROR HANDLING ===
+            mark_step_failed(project, str(e))
+            logger.error(f"Step 3 failed: {e}")
+            error_msg = str(e)
+            if "429" in error_msg or "quota" in error_msg.lower() or "too_many_requests" in error_msg.lower():
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Gemini API rate limit exceeded. Please wait and try again. Details: {error_msg}"
+                )
+            raise HTTPException(status_code=500, detail=f"Step 3 (Portraits) failed: {error_msg}")
 
 
