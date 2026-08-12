@@ -4,8 +4,13 @@ import logging
 import tempfile
 from typing import Optional, Tuple, Any, List
 from google import genai
+from pydantic import BaseModel
 
 from app.models.project import Character, Chapter 
+
+class CharacterPrompt(BaseModel):
+    name: str
+    prompt: str
 logger = logging.getLogger(__name__)
 
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../data"))
@@ -29,7 +34,7 @@ class GeminiService:
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY environment variable is required")
         self.client = genai.Client(api_key=self.api_key)
-        self.text_model = "gemini-2.5-flash"
+        self.text_model = "gemini-3.5-flash"
         self.image_model = "gemini-2.5-flash-image"
     
     # === STEP 1: EXTRACT ART STYLE ===
@@ -109,3 +114,65 @@ class GeminiService:
             return ' '.join(words[:5])
         
         return first_line
+
+    # === STEP 2: EXTRACT CHARACTERS ===
+    def extract_characters(
+        self,
+        session_ref: str,
+        style: str,
+        max_characters: int = 2
+    ) -> List[Character]:
+        """
+        Step 2: Extract main adult characters (max 2).
+        Uses structured output with Pydantic.
+        """
+        prompt = """
+        Extract the main adult characters from this book.
+        
+        Requirements:
+        - Return EXACTLY 2 characters maximum
+        - Only include ADULT characters (age 18+)
+        - For each character provide:
+          - name: Character's full name
+          - prompt: Detailed description for AI image generation (at least 50 words)
+            Include: physical appearance, clothing, personality, and the artistic style
+        
+        Return as JSON array with fields: name, prompt
+        """
+        
+        response = self.client.interactions.create(
+            model=self.text_model,
+            input=prompt,
+            previous_interaction_id=session_ref,
+            response_format={
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": {"type": "array", "items": CharacterPrompt.model_json_schema()},
+            },
+        )
+        
+        # Parse response
+        try:
+            data = json.loads(response.output_text)
+        except json.JSONDecodeError:
+            import re
+            match = re.search(r'\[.*\]', response.output_text, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+            else:
+                raise ValueError("Failed to parse Gemini response")
+        
+        # Convert to Character objects
+        characters = []
+        for idx, item in enumerate(data[:max_characters]):
+            image_prompt = f"{item.get('prompt', '')} Style: {style}"
+            
+            char = Character(
+                id=f"char_{idx + 1}",
+                name=item.get("name", "Unknown"),
+                description=item.get("prompt", ""),
+                image_prompt=image_prompt
+            )
+            characters.append(char)
+        
+        return characters

@@ -230,3 +230,83 @@ async def execute_style_step(project_id: str, req: Optional[StyleStepRequest] = 
         project.step_started_at = None
         storage_service.save_project(project)
         raise HTTPException(status_code=500, detail=f"Step 1 (Style) failed: {str(e)}")
+
+
+@router.post("/characters", response_model=Dict[str, Any])
+async def execute_characters_step(
+    project_id: str,
+    gemini_service: GeminiService = Depends(get_gemini_service)
+):
+    """
+    Step 2: Extract main adult characters (max 2).
+    """
+    # === 1. LOAD PROJECT ===
+    project = storage_service.load_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # === 2. VALIDATE STEP ===
+    if project.current_step != 2:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Step 2 is not the current step (current: {project.current_step})"
+        )
+    
+    if project.status == StatusEnum.DONE:
+        raise HTTPException(status_code=400, detail="Project is already completed")
+    
+    # === 3. VALIDATE PREREQUISITES ===
+    if not project.style:
+        raise HTTPException(status_code=400, detail="Style must be set first (Step 1)")
+    
+    if not project.gemini_session_ref:
+        raise HTTPException(
+            status_code=400, 
+            detail="Gemini session not found. Please re-run Step 1."
+        )
+    
+    # === 4. VALIDATE EXECUTION LOCK ===
+    try:
+        validate_step_execution_lock(project, step=2, required_min_status=StatusEnum.STYLE_SET)
+    except StaleStepError as e:
+        handle_stale_step_exception(project, e)
+    
+    # === 5. MARK AS RUNNING ===
+    project.step_state = StepStateEnum.RUNNING
+    project.step_started_at = datetime.now(timezone.utc).isoformat()
+    project.step_error = None
+    storage_service.save_project(project)
+    
+    # === 6. EXECUTE ===
+    try:
+        characters = gemini_service.extract_characters(
+            session_ref=project.gemini_session_ref,
+            style=project.style
+        )
+        
+        # Server-side enforcement: max 2 characters
+        if len(characters) > 2:
+            characters = characters[:2]
+            logger.warning(f"Extracted {len(characters)} characters, truncated to 2")
+        
+        # === 7. SAVE RESULTS ===
+        project.characters = characters
+        project.status = StatusEnum.CHARACTERS_GENERATED
+        project.current_step = 3
+        project.step_state = StepStateEnum.IDLE
+        project.step_started_at = None
+        project.step_error = None
+        
+        saved_project = storage_service.save_project(project)
+        logger.info(f"Step 2 completed for project {project_id}: {len(characters)} characters extracted")
+        return {"data": saved_project}
+    
+    except Exception as e:
+        # === 8. ERROR HANDLING ===
+        project.step_state = StepStateEnum.FAILED
+        project.step_error = str(e)
+        project.step_started_at = None
+        storage_service.save_project(project)
+        logger.error(f"Step 2 failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Step 2 (Characters) failed: {str(e)}")
+

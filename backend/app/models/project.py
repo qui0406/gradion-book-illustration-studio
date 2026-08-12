@@ -30,6 +30,7 @@ class Character(BaseModel):
     id: str
     name: str
     image_prompt: str
+    description: Optional[str] = None
     portrait_ready: bool = False
     portrait_path: Optional[str] = None
 
@@ -51,7 +52,7 @@ class Project(BaseModel):
     
     # === PIPELINE STATE ===
     status: StatusEnum = StatusEnum.CREATED
-    current_step: int = Field(default=1, ge=1, le=5)  # ⬅️ THÊM DÒNG NÀY
+    current_step: int = Field(default=1, ge=1, le=5)
     step_state: StepStateEnum = StepStateEnum.IDLE
     step_started_at: Optional[str] = None
     step_error: Optional[str] = None

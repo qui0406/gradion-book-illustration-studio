@@ -134,6 +134,30 @@ def test_step_1_style_execution():
     assert project_data["status"] == "STYLE_SET"
     assert project_data["step_state"] == "IDLE"
 
+def test_step_2_characters_execution():
+    """
+    Test Step 2: POST /api/projects/{project_id}/steps/characters.
+    """
+    payload = {
+        "user_email": "qui0406@example.com",
+        "title": "Chuyện Tấm Cám",
+        "book_text": "Ngày xửa ngày xưa ở một làng nọ có hai chị em tên là Tấm và Cám..."
+    }
+    create_resp = client.post("/api/projects", json=payload)
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["data"]["id"]
+
+    # Step 1 must be run first
+    client.post(f"/api/projects/{project_id}/steps/style", json={"style": "Watercolor Illustration"})
+
+    # Execute Step 2 Characters
+    char_resp = client.post(f"/api/projects/{project_id}/steps/characters")
+    assert char_resp.status_code == 200
+    project_data = char_resp.json()["data"]
+    assert project_data["status"] == "CHARACTERS_GENERATED"
+    assert project_data["step_state"] == "IDLE"
+    assert len(project_data["characters"]) <= 2
+    assert len(project_data["characters"]) > 0
 
 
 
