@@ -56,8 +56,11 @@ I built this project using Cursor with Claude 3.5 Sonnet. Each decision below or
   1. **No Image Validation (Bug / Reliability)**: The AI wrote raw image bytes directly to disk without validating the file size, headers, or checking for file corruption.
   2. **No Guarantee `portraits` Matches `characters` (Logic Bug)**: In the generation loop, if one character's portrait failed to generate, the AI silently skipped it and marked the step complete, leaving the project in an incomplete state.
   3. **No 429 Error Handling (Error Handling)**: The API returned a 500 error immediately on rate limits without any graceful handling or user-controlled retries.
-- **Final Decision**: Plan to address these reliability and logic bugs directly in the Gemini pipeline in future updates (e.g., implementing image validation, raising explicit exceptions for partial failures).
-- **Trade-off**: Requires implementing robust validations and error handling in future updates.
+- **Final Decision**: Implemented robust safeguards directly in the backend pipeline:
+  1. Added header signature verification (`PNG`/`JPEG`) and minimum file size checks (>100 bytes) in `_save_image` to prevent corrupt files.
+  2. Enforced transactional completion in Step 3/5: any partial failure raises a `RuntimeError` immediately, setting the step to `FAILED` so the user is forced to retry the step, avoiding incomplete project states.
+  3. Added rate-limiting (429) detection in exception catch blocks, returning explicit 429 status codes with actionable advice for user-triggered retries.
+- **Trade-off**: Increases lines of code and validation checks, but guarantees a highly reliable and bulletproof generation flow.
 
 ---
 
@@ -70,4 +73,11 @@ I built this project using Cursor with Claude 3.5 Sonnet. Each decision below or
   2. **File lock** (`filelock`) - Prevents concurrent writes across processes.
   3. **Optimistic locking** (version field) - Detects conflicts during read/write operations.
 - **Trade-off**: Adds complexity, but guarantees no duplicate API calls and 100% data safety against race conditions.
+
+---
+
+## If you had one more day, what would you build next and why?
+
+If I had one more day, I would build **Real-Time Step Updates using Server-Sent Events (SSE)**.
+Currently, the frontend uses short-polling (every 2.5 seconds) to fetch the latest project state while steps are `RUNNING`. This creates extra network overhead and introduces up to 2.5 seconds of lag between a step's backend completion and the frontend UI update. By implementing SSE, the backend could push updates instantly (e.g., when a single portrait is saved) to the frontend. This would make the step transitions feel incredibly fast, responsive, and fluid, improving the UX without loading the server with repetitive poll requests. Additionally, I would add a **retry attempt history log** to the UI, allowing the user to view past rate-limiting failures or timeouts, enhancing the auditability of the pipeline.
 

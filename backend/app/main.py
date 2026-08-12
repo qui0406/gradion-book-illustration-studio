@@ -49,6 +49,14 @@ async def serve_project_image(project_id: str, entity_id: str, folder: Optional[
     """
     Serve generated PNG images for character portraits and chapter illustrations.
     """
+    # Strip extension if present in entity_id (since we append .png below)
+    if entity_id.lower().endswith(".png"):
+        entity_id = entity_id[:-4]
+    elif entity_id.lower().endswith(".jpeg"):
+        entity_id = entity_id[:-5]
+    elif entity_id.lower().endswith(".jpg"):
+        entity_id = entity_id[:-4]
+
     safe_proj = re.sub(r'[^a-zA-Z0-9_-]', '_', project_id)
     safe_entity = re.sub(r'[^a-zA-Z0-9_-]', '_', entity_id)
 
