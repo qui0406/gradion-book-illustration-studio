@@ -160,6 +160,42 @@ def test_step_2_characters_execution():
     assert len(project_data["characters"]) > 0
 
 
+def test_step_3_portraits_execution():
+    """
+    Test Step 3: POST /api/projects/{project_id}/steps/portraits.
+    """
+    payload = {
+        "user_email": "qui0406@example.com",
+        "title": "Chuyện Tấm Cám",
+        "book_text": "Ngày xửa ngày xưa ở một làng nọ có hai chị em tên là Tấm và Cám..."
+    }
+    create_resp = client.post("/api/projects", json=payload)
+    assert create_resp.status_code == 200
+    project_id = create_resp.json()["data"]["id"]
+
+    # Run Step 1 Style & Step 2 Characters
+    client.post(f"/api/projects/{project_id}/steps/style", json={"style": "Watercolor Illustration"})
+    client.post(f"/api/projects/{project_id}/steps/characters")
+
+    # Run Step 3 Portraits
+    portrait_resp = client.post(f"/api/projects/{project_id}/steps/portraits")
+    assert portrait_resp.status_code == 200
+    project_data = portrait_resp.json()["data"]
+    assert project_data["status"] == "PORTRAITS_GENERATED"
+    assert project_data["step_state"] == "IDLE"
+    assert len(project_data["portraits"]) > 0
+
+    for port in project_data["portraits"]:
+        assert port["image_path"].startswith("/images/")
+        
+        # Test GET /api/images/{project_id}/portraits/{character_name}
+        char_name = port["character_name"]
+        img_resp = client.get(f"/api/images/{project_id}/portraits/{char_name}")
+        assert img_resp.status_code == 200
+        assert img_resp.headers["content-type"] == "image/png"
+
+
+
 
 def test_project_character_limit_validation():
     """

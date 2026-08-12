@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, computed_field
 
 
 
@@ -52,7 +52,6 @@ class Project(BaseModel):
     
     # === PIPELINE STATE ===
     status: StatusEnum = StatusEnum.CREATED
-    current_step: int = Field(default=1, ge=1, le=5)
     step_state: StepStateEnum = StepStateEnum.IDLE
     step_started_at: Optional[str] = None
     step_error: Optional[str] = None
@@ -91,3 +90,20 @@ class Project(BaseModel):
         if len(v) > 1:
             raise ValueError("Maximum 1 chapter allowed")
         return v
+
+    @computed_field
+    @property
+    def current_step(self) -> int:
+        status_order = [
+            StatusEnum.CREATED,
+            StatusEnum.STYLE_SET,
+            StatusEnum.CHARACTERS_GENERATED,
+            StatusEnum.PORTRAITS_GENERATED,
+            StatusEnum.CHAPTERS_GENERATED,
+            StatusEnum.DONE
+        ]
+        try:
+            idx = status_order.index(self.status)
+            return min(idx + 1, 5)
+        except ValueError:
+            return 1

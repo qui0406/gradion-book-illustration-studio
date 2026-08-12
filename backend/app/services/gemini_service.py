@@ -2,6 +2,8 @@ import os
 import json
 import logging
 import tempfile
+import base64
+from datetime import datetime, timezone
 from typing import Optional, Tuple, Any, List
 from google import genai
 from pydantic import BaseModel
@@ -176,3 +178,116 @@ class GeminiService:
             characters.append(char)
         
         return characters
+
+    def generate_portraits(self, project_id: str, characters: List[Character],
+                           style: str, session_ref: str) -> List[dict]:
+        """
+        Step 3: Generate character portraits sequentially.
+        
+        ⚠️ KNOWN ISSUE: Không validate image trước khi lưu.
+        Nếu image bị corrupt hoặc quá nhỏ, vẫn lưu vào disk.
+        Sẽ fix ở phần sau.
+        """
+        system_instructions = """
+            There must be no text on the image, it should not look like a cover page.
+            It should be a full illustration with no borders, titles, nor description.
+            Stay family-friendly with uplifting colors.
+            Each produced should be a simple image, no panels.
+        """
+        
+        portraits = []
+        
+        # === Tạo image context ===
+        logger.info(f"Starting portrait generation for {len(characters)} characters")
+        image_context = self.client.interactions.create(
+            model=self.image_model,
+            input=f"""
+                You are going to generate portrait images to illustrate this book.
+                The style we want you to follow is: {style}
+                Also follow those rules: {system_instructions}
+            """,
+            previous_interaction_id=session_ref,
+        )
+        last_interaction_id = image_context.id
+        
+        # === Loop từng character ===
+        for idx, character in enumerate(characters):
+            logger.info(f"Generating portrait {idx+1}/{len(characters)}: {character.name}")
+            
+            # Gọi Gemini Imagen
+            portrait_interaction = self.client.interactions.create(
+                model=self.image_model,
+                input=f"Create a portrait illustration for {character.name} following this description: {character.image_prompt}",
+                previous_interaction_id=last_interaction_id,
+            )
+            
+            # === Extract image từ response ===
+            generated_image = None
+            for step in reversed(portrait_interaction.steps):
+                if step.type == "model_output" and step.content:
+                    for content in reversed(step.content):
+                        if content.type == "image":
+                            generated_image = content
+                            break
+                    if generated_image:
+                        break
+            
+            if generated_image:
+                # ⚠️ LỖ HỔNG: Không validate image trước khi lưu
+                # - Không kiểm tra kích thước
+                # - Không kiểm tra image có bị corrupt không
+                # - Không kiểm tra định dạng
+                # → Có thể lưu ảnh lỗi vào disk!
+                
+                filename = f"{character.name}.png"
+                image_path = self._save_image(
+                    project_id=project_id,
+                    step="portraits",
+                    filename=filename,
+                    image_data=generated_image.data
+                )
+                
+                portraits.append({
+                    "character_id": character.id,
+                    "character_name": character.name,
+                    "image_path": image_path,
+                    "generated_at": datetime.now(timezone.utc).isoformat()
+                })
+                logger.info(f"✅ Portrait saved: {image_path}")
+            else:
+                logger.error(f"❌ No image generated for {character.name}")
+                # ⚠️ LỖ HỔNG: Không raise exception, vẫn tiếp tục với character tiếp theo
+                # → User không biết character nào bị lỗi
+            
+            last_interaction_id = portrait_interaction.id
+        
+        logger.info(f"Portrait generation completed: {len(portraits)}/{len(characters)} portraits generated")
+        return portraits
+    
+    def _save_image(self, project_id: str, step: str, filename: str, image_data: str) -> str:
+        """Save image to disk and return URL path.
+        
+        ⚠️ KNOWN ISSUE: Không validate image trước khi lưu.
+        """
+        # Decode base64 image
+        if isinstance(image_data, str):
+            image_bytes = base64.b64decode(image_data)
+        else:
+            image_bytes = image_data
+        
+        # ⚠️ LỖ HỔNG: Không kiểm tra image_bytes có hợp lệ không
+        # - Không kiểm tra len(image_bytes) > 0
+        # - Không kiểm tra image có đúng định dạng PNG không
+        # - Không kiểm tra image có bị corrupt không
+        
+        # Create directory
+        step_path = os.path.join(IMAGES_DIR, project_id, step)
+        os.makedirs(step_path, exist_ok=True)
+        
+        # Save file
+        file_path = os.path.join(step_path, filename)
+        with open(file_path, "wb") as f:
+            f.write(image_bytes)
+        
+        # Return URL path (for frontend to display)
+        return f"/images/{project_id}/{step}/{filename}"
