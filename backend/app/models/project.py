@@ -38,7 +38,9 @@ class Character(BaseModel):
 class Chapter(BaseModel):
     id: str
     title: str
+    summary: Optional[str] = None
     illustration_prompt: str
+    characters: List[str] = []  # character names appearing in this chapter
     illustration_ready: bool = False
     illustration_path: Optional[str] = None
 

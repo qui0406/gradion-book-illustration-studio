@@ -396,3 +396,53 @@ def test_step_concurrency_lock():
     assert resp.status_code == 409
     assert "Duplicate request blocked" in resp.json()["detail"]
 
+
+def test_step_4_chapters_execution():
+    """
+    Test Step 4: POST /api/projects/{project_id}/steps/chapters.
+    """
+    from app.services import storage_service
+    from app.models.project import Character, StatusEnum
+    import os
+
+    # Clean up stale files from previous runs
+    filepath = storage_service.get_project_file_path("p_step4_test")
+    if os.path.exists(filepath):
+        os.remove(filepath)
+    if os.path.exists(f"{filepath}.lock"):
+        os.remove(f"{filepath}.lock")
+
+    # Setup a project ready for Step 4
+    char1 = Character(id="c1", name="Tấm", image_prompt="Tấm prompt")
+    char2 = Character(id="c2", name="Cám", image_prompt="Cám prompt")
+
+    project = Project(
+        id="p_step4_test",
+        user_email="qui0406@example.com",
+        title="Tấm Cám",
+        book_text="Tấm Cám là một truyện cổ tích Việt Nam.",
+        created_at="2026-08-12T12:15:21+00:00",
+        status=StatusEnum.PORTRAITS_GENERATED,
+        style="Watercolor Illustration",
+        style_source="user_provided",
+        characters=[char1, char2],
+        portraits=[
+            {"character_id": "c1", "character_name": "Tấm", "image_path": "/images/p_step4_test/portraits/Tấm.png"},
+            {"character_id": "c2", "character_name": "Cám", "image_path": "/images/p_step4_test/portraits/Cám.png"}
+        ],
+        gemini_session_ref="v1_ChdKU3g4YXVqTUFkYV92cjBQakozaTJRMBIXS1N4OGF0eUFOdjZ5dnIwUGlkZk9xQTA",
+        version=1
+    )
+    storage_service.save_project(project)  # Writes version=2 to disk
+
+    # Trigger Step 4 Chapters
+    chap_resp = client.post(f"/api/projects/p_step4_test/steps/chapters")
+
+    assert chap_resp.status_code in [200, 429]
+    if chap_resp.status_code == 200:
+        project_data = chap_resp.json()["data"]
+        assert project_data["status"] == "CHAPTERS_GENERATED"
+        assert len(project_data["chapters"]) == 1
+        assert project_data["chapters"][0]["title"] is not None
+        assert len(project_data["chapters"][0]["characters"]) > 0
+

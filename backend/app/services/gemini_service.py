@@ -13,6 +13,12 @@ from app.models.project import Character, Chapter
 class CharacterPrompt(BaseModel):
     name: str
     prompt: str
+
+class ChapterPrompt(BaseModel):
+    name: str           # Chapter title
+    prompt: str         # Illustration prompt (at least 50 words)
+    characters: List[str]  # Characters appearing in this chapter
+
 logger = logging.getLogger(__name__)
 
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../data"))
@@ -254,6 +260,82 @@ class GeminiService:
         logger.info(f"Portrait generation completed: {len(portraits)}/{len(characters)} portraits generated")
         return portraits
     
+    # === STEP 4: EXTRACT CHAPTERS ===
+    def extract_chapters(
+        self,
+        session_ref: str,
+        characters: List[Character],
+        style: str,
+        max_chapters: int = 1
+    ) -> List[Chapter]:
+        """
+        Step 4: Extract the most visually interesting chapter (max 1).
+        Uses the existing Gemini session (session_ref) — no re-upload of book.
+        """
+        character_names = ", ".join([c.name for c in characters])
+
+        prompt = f"""
+        Extract the most visually interesting chapter from this book.
+
+        Requirements:
+        - Return EXACTLY 1 chapter maximum
+        - The chapter should feature these characters: {character_names}
+        - For each chapter provide:
+          - name: Chapter title
+          - prompt: Detailed description for AI image generation (at least 50 words)
+            Include: setting, actions, mood, lighting, and the artistic style
+          - characters: List of character names appearing in this chapter
+
+        Return as JSON array with fields: name, prompt, characters
+        """
+
+        response = self.client.interactions.create(
+            model=self.text_model,
+            input=prompt,
+            previous_interaction_id=session_ref,
+            response_format={
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": {"type": "array", "items": ChapterPrompt.model_json_schema()},
+            },
+        )
+
+        # Parse response
+        try:
+            data = json.loads(response.output_text)
+        except json.JSONDecodeError:
+            import re
+            match = re.search(r'\[.*\]', response.output_text, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+            else:
+                raise ValueError("Failed to parse Gemini chapter extraction response")
+
+        # Normalize to list of dicts
+        if isinstance(data, dict):
+            data = [data]
+        if not isinstance(data, list):
+            raise ValueError(f"Unexpected response shape: {type(data)}")
+
+        # Server-side enforcement: max 1 chapter
+        if len(data) > max_chapters:
+            data = data[:max_chapters]
+            logger.warning(f"Gemini returned {len(data)} chapters, truncated to {max_chapters}")
+
+        chapters = []
+        for idx, item in enumerate(data):
+            chapter = Chapter(
+                id=f"ch_{idx + 1}",
+                title=item.get("name", f"Chapter {idx + 1}"),
+                summary=item.get("prompt", ""),
+                illustration_prompt=f"{item.get('prompt', '')} Style: {style}",
+                characters=item.get("characters", [])
+            )
+            chapters.append(chapter)
+
+        logger.info(f"Extracted {len(chapters)} chapter(s) via Gemini")
+        return chapters
+
     def _save_image(self, project_id: str, step: str, filename: str, image_data: str) -> str:
         # Decode base64 image
         if isinstance(image_data, str):
