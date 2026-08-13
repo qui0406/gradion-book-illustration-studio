@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import Depends
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
@@ -7,8 +8,10 @@ from pydantic import BaseModel
 
 from app.models.project import Project, StatusEnum, StepStateEnum
 from app.services import storage_service
+from app.dependencies import get_authenticated_project
 
 router = APIRouter()
+
 logger = logging.getLogger(__name__)
 
 from app.services.gemini_service import GeminiService
@@ -166,8 +169,10 @@ def mark_step_failed(project: Project, error: str) -> None:
 
 @router.post("/style", response_model=Dict[str, Any])
 async def execute_style_step(project_id: str, req: Optional[StyleStepRequest] = None, 
-                                gemini_service: GeminiService = Depends(get_gemini_service)):
+                                gemini_service: GeminiService = Depends(get_gemini_service),
+                                _project: Project = Depends(get_authenticated_project)):
     async with step_lock_manager.get_lock(project_id):
+
         # === 1. LOAD PROJECT ===
         project = storage_service.load_project(project_id)
         if not project:
@@ -200,7 +205,8 @@ async def execute_style_step(project_id: str, req: Optional[StyleStepRequest] = 
 
         # === 6. EXECUTE ===
         try:
-            selected_style, source, session_ref = gemini_service.extract_art_style(
+            selected_style, source, session_ref = await asyncio.to_thread(
+                gemini_service.extract_art_style,
                 project.book_text, custom_style, project.id
             )
 
@@ -218,13 +224,21 @@ async def execute_style_step(project_id: str, req: Optional[StyleStepRequest] = 
         except Exception as e:
             # === 8. ERROR HANDLING ===
             mark_step_failed(project, str(e))
-            raise HTTPException(status_code=500, detail=f"Step 1 (Style) failed: {str(e)}")
+            logger.error(f"Step 1 failed: {e}")
+            error_msg = str(e)
+            if "429" in error_msg or "quota" in error_msg.lower() or "too_many_requests" in error_msg.lower():
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Gemini API rate limit exceeded. Please wait and try again. Details: {error_msg}"
+                )
+            raise HTTPException(status_code=500, detail=f"Step 1 (Style) failed: {error_msg}")
 
 
 @router.post("/characters", response_model=Dict[str, Any])
 async def execute_characters_step(
     project_id: str,
-    gemini_service: GeminiService = Depends(get_gemini_service)
+    gemini_service: GeminiService = Depends(get_gemini_service),
+    _project: Project = Depends(get_authenticated_project)
 ):
     """
     Step 2: Extract main adult characters (max 2).
@@ -266,7 +280,8 @@ async def execute_characters_step(
         
         # === 6. EXECUTE ===
         try:
-            characters = gemini_service.extract_characters(
+            characters = await asyncio.to_thread(
+                gemini_service.extract_characters,
                 session_ref=project.gemini_session_ref,
                 style=project.style
             )
@@ -287,13 +302,20 @@ async def execute_characters_step(
             # === 8. ERROR HANDLING ===
             mark_step_failed(project, str(e))
             logger.error(f"Step 2 failed: {e}")
-            raise HTTPException(status_code=500, detail=f"Step 2 (Characters) failed: {str(e)}")
+            error_msg = str(e)
+            if "429" in error_msg or "quota" in error_msg.lower() or "too_many_requests" in error_msg.lower():
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Gemini API rate limit exceeded. Please wait and try again. Details: {error_msg}"
+                )
+            raise HTTPException(status_code=500, detail=f"Step 2 (Characters) failed: {error_msg}")
 
 
 @router.post("/portraits", response_model=Dict[str, Any])
 async def execute_portraits_step(
     project_id: str,
-    gemini_service: GeminiService = Depends(get_gemini_service)
+    gemini_service: GeminiService = Depends(get_gemini_service),
+    _project: Project = Depends(get_authenticated_project)
 ):
     """
     Step 3: Generate character portraits sequentially.
@@ -342,11 +364,27 @@ async def execute_portraits_step(
         
         # === 6. EXECUTE ===
         try:
-            portraits = gemini_service.generate_portraits(
+            def on_portrait_saved(portrait_item: dict):
+                existing_idx = next(
+                    (i for i, p in enumerate(project.portraits) if p.get("character_id") == portrait_item.get("character_id")),
+                    None
+                )
+                if existing_idx is not None:
+                    project.portraits[existing_idx] = portrait_item
+                else:
+                    project.portraits.append(portrait_item)
+
+                storage_service.save_project(project)
+                logger.info(f"Persisted progress for portrait: {portrait_item.get('character_name')}")
+
+            portraits = await asyncio.to_thread(
+                gemini_service.generate_portraits,
                 project_id=project_id,
                 characters=project.characters,
                 style=project.style,
-                session_ref=project.gemini_session_ref
+                session_ref=project.gemini_session_ref,
+                existing_portraits=project.portraits,
+                on_portrait_saved=on_portrait_saved
             )
             
             # === 7. SAVE RESULTS ===
@@ -372,7 +410,8 @@ async def execute_portraits_step(
 @router.post("/chapters", response_model=Dict[str, Any])
 async def execute_chapters_step(
     project_id: str,
-    gemini_service: GeminiService = Depends(get_gemini_service)
+    gemini_service: GeminiService = Depends(get_gemini_service),
+    _project: Project = Depends(get_authenticated_project)
 ):
     """
     Step 4: Extract the most visually interesting chapter (max 1) using Gemini.
@@ -418,7 +457,8 @@ async def execute_chapters_step(
 
         # === 6. EXECUTE ===
         try:
-            chapters = gemini_service.extract_chapters(
+            chapters = await asyncio.to_thread(
+                gemini_service.extract_chapters,
                 session_ref=project.gemini_session_ref,
                 characters=project.characters,
                 style=project.style,
@@ -456,7 +496,8 @@ async def execute_chapters_step(
 @router.post("/illustrations", response_model=Dict[str, Any])
 async def execute_illustrations_step(
     project_id: str,
-    gemini_service: GeminiService = Depends(get_gemini_service)
+    gemini_service: GeminiService = Depends(get_gemini_service),
+    _project: Project = Depends(get_authenticated_project)
 ):
     """
     Step 5: Generate chapter illustrations using Gemini Imagen.
@@ -502,12 +543,28 @@ async def execute_illustrations_step(
 
         # === 6. EXECUTE ===
         try:
-            illustrations = gemini_service.generate_illustrations(
+            def on_illustration_saved(illustration_item: dict):
+                existing_idx = next(
+                    (i for i, item in enumerate(project.illustrations) if item.get("chapter_id") == illustration_item.get("chapter_id")),
+                    None
+                )
+                if existing_idx is not None:
+                    project.illustrations[existing_idx] = illustration_item
+                else:
+                    project.illustrations.append(illustration_item)
+
+                storage_service.save_project(project)
+                logger.info(f"Persisted progress for illustration: {illustration_item.get('chapter_title')}")
+
+            illustrations = await asyncio.to_thread(
+                gemini_service.generate_illustrations,
                 project_id=project_id,
                 chapters=project.chapters,
                 portraits=project.portraits,
                 style=project.style,
-                session_ref=project.gemini_session_ref
+                session_ref=project.gemini_session_ref,
+                existing_illustrations=project.illustrations,
+                on_illustration_saved=on_illustration_saved
             )
 
             # Server-side enforcement: 1 illustration per chapter

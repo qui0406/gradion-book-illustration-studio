@@ -15,8 +15,9 @@ cd ..
 echo ""
 echo "=== Running Frontend Tests ==="
 cd frontend
-npm test -- --watchAll=false 2>/dev/null || echo "Frontend tests skipped or completed."
+npm test -- --run
 cd ..
 
 echo ""
-echo "=== All Tests Completed ==="
+echo "=== All Tests Completed Successfully ==="
+

@@ -9,4 +9,20 @@ const client = axios.create({
   },
 });
 
+client.interceptors.request.use((config) => {
+  try {
+    const raw = localStorage.getItem('gradion_user');
+    if (raw) {
+      const user = JSON.parse(raw);
+      if (user && user.email) {
+        config.headers['X-User-Email'] = user.email;
+      }
+    }
+  } catch {
+    // Ignore JSON parse errors
+  }
+  return config;
+});
+
 export default client;
+

@@ -4,15 +4,20 @@ import logging
 import tempfile
 import base64
 from datetime import datetime, timezone
-from typing import Optional, Tuple, Any, List
+from typing import Optional, Tuple, Any, List, Callable
 from google import genai
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.project import Character, Chapter 
 
-class CharacterPrompt(BaseModel):
+
+class CharacterCandidate(BaseModel):
     name: str
-    prompt: str
+    age: int = Field(..., ge=18, description="Estimated age of adult character (MUST BE 18 OR OLDER)")
+    prompt: str = Field(..., description="Detailed visual description for AI image generation (at least 50 words)")
+
+CharacterPrompt = CharacterCandidate
+
 
 class ChapterPrompt(BaseModel):
     name: str           # Chapter title
@@ -132,7 +137,7 @@ class GeminiService:
     ) -> List[Character]:
         """
         Step 2: Extract main adult characters (max 2).
-        Uses structured output with Pydantic.
+        Uses structured output with Pydantic and enforces adult-only (age 18+) constraint.
         """
         prompt = """
         Extract the main adult characters from this book.
@@ -142,10 +147,11 @@ class GeminiService:
         - Only include ADULT characters (age 18+)
         - For each character provide:
           - name: Character's full name
+          - age: Estimated age as an integer (MUST BE 18 OR OLDER)
           - prompt: Detailed description for AI image generation (at least 50 words)
             Include: physical appearance, clothing, personality, and the artistic style
         
-        Return as JSON array with fields: name, prompt
+        Return as JSON array with fields: name, age, prompt
         """
         
         response = self.client.interactions.create(
@@ -155,7 +161,7 @@ class GeminiService:
             response_format={
                 "type": "text",
                 "mime_type": "application/json",
-                "schema": {"type": "array", "items": CharacterPrompt.model_json_schema()},
+                "schema": {"type": "array", "items": CharacterCandidate.model_json_schema()},
             },
         )
         
@@ -170,25 +176,59 @@ class GeminiService:
             else:
                 raise ValueError("Failed to parse Gemini response")
         
-        # Convert to Character objects
+        if isinstance(data, dict):
+            data = [data]
+        if not isinstance(data, list):
+            raise ValueError(f"Unexpected response shape for characters: {type(data)}")
+
+        # Validate candidates against CharacterCandidate schema (age >= 18 constraint)
+        valid_candidates = []
+        for item in data:
+            try:
+                candidate = CharacterCandidate(**item)
+                valid_candidates.append(candidate)
+            except Exception as e:
+                logger.warning(f"Rejected non-adult or invalid character candidate {item}: {e}")
+
+        if not valid_candidates:
+            raise ValueError("No adult characters (age 18+) were extracted from the text.")
+
+        # Convert to Character objects (max 2 adult characters)
         characters = []
-        for idx, item in enumerate(data[:max_characters]):
-            image_prompt = f"{item.get('prompt', '')} Style: {style}"
+        for idx, candidate in enumerate(valid_candidates[:max_characters]):
+            image_prompt = f"{candidate.prompt} Style: {style}"
             
             char = Character(
                 id=f"char_{idx + 1}",
-                name=item.get("name", "Unknown"),
-                description=item.get("prompt", ""),
+                name=candidate.name,
+                age=candidate.age,
+                description=candidate.prompt,
                 image_prompt=image_prompt
             )
             characters.append(char)
         
         return characters
 
-    def generate_portraits(self, project_id: str, characters: List[Character],
-                           style: str, session_ref: str) -> List[dict]:
+
+    def _is_image_valid_on_disk(self, image_path: Optional[str]) -> bool:
+        if not image_path or not isinstance(image_path, str) or not image_path.startswith("/api/images/"):
+            return False
+        rel_path = image_path.replace("/api/images/", "", 1)
+        local_path = os.path.join(IMAGES_DIR, rel_path)
+        return os.path.exists(local_path) and os.path.getsize(local_path) >= 100
+
+    def generate_portraits(
+        self,
+        project_id: str,
+        characters: List[Character],
+        style: str,
+        session_ref: str,
+        existing_portraits: Optional[List[dict]] = None,
+        on_portrait_saved: Optional[Callable[[dict], None]] = None
+    ) -> List[dict]:
         """
         Step 3: Generate character portraits sequentially.
+        Performs immediate persistence after saving each image, and skips already-generated portraits on retry.
         """
         system_instructions = """
             There must be no text on the image, it should not look like a cover page.
@@ -197,23 +237,39 @@ class GeminiService:
             Each produced should be a simple image, no panels.
         """
         
+        existing_dict_by_id = {}
+        if existing_portraits:
+            for p in existing_portraits:
+                char_id = p.get("character_id")
+                if char_id and self._is_image_valid_on_disk(p.get("image_path")):
+                    existing_dict_by_id[char_id] = p
+
         portraits = []
-        
-        # === Tạo image context ===
-        logger.info(f"Starting portrait generation for {len(characters)} characters")
-        image_context = self.client.interactions.create(
-            model=self.image_model,
-            input=f"""
-                You are going to generate portrait images to illustrate this book.
-                The style we want you to follow is: {style}
-                Also follow those rules: {system_instructions}
-            """,
-            previous_interaction_id=session_ref,
-        )
-        last_interaction_id = image_context.id
-        
-        # === Loop từng character ===
+        last_interaction_id = session_ref
+        image_context_created = False
+
         for idx, character in enumerate(characters):
+            # Check if valid portrait already exists for this character
+            if character.id in existing_dict_by_id:
+                logger.info(f"Portrait for character '{character.name}' already exists on disk, skipping generation.")
+                portraits.append(existing_dict_by_id[character.id])
+                continue
+
+            # Lazily initialize image context on first missing image
+            if not image_context_created:
+                logger.info(f"Starting portrait generation for missing character portraits")
+                image_context = self.client.interactions.create(
+                    model=self.image_model,
+                    input=f"""
+                        You are going to generate portrait images to illustrate this book.
+                        The style we want you to follow is: {style}
+                        Also follow those rules: {system_instructions}
+                    """,
+                    previous_interaction_id=last_interaction_id,
+                )
+                last_interaction_id = image_context.id
+                image_context_created = True
+
             logger.info(f"Generating portrait {idx+1}/{len(characters)}: {character.name}")
             
             # Gọi Gemini Imagen
@@ -242,13 +298,20 @@ class GeminiService:
                     image_data=generated_image.data
                 )
                 
-                portraits.append({
+                portrait_item = {
                     "character_id": character.id,
                     "character_name": character.name,
                     "image_path": image_path,
                     "generated_at": datetime.now(timezone.utc).isoformat()
-                })
+                }
+                portraits.append(portrait_item)
                 logger.info(f"✅ Portrait saved: {image_path}")
+
+                if on_portrait_saved:
+                    try:
+                        on_portrait_saved(portrait_item)
+                    except Exception as err:
+                        logger.warning(f"Error in on_portrait_saved callback: {err}")
             else:
                 logger.error(f"No image generated for {character.name}")
                 raise RuntimeError(f"Gemini Imagen failed to generate a portrait image for character: {character.name}")
@@ -257,6 +320,7 @@ class GeminiService:
         
         logger.info(f"Portrait generation completed: {len(portraits)}/{len(characters)} portraits generated")
         return portraits
+
     
     # === STEP 4: EXTRACT CHAPTERS ===
     def extract_chapters(
@@ -341,12 +405,15 @@ class GeminiService:
         chapters: List[Chapter],
         portraits: List[dict],
         style: str,
-        session_ref: str
+        session_ref: str,
+        existing_illustrations: Optional[List[dict]] = None,
+        on_illustration_saved: Optional[Callable[[dict], None]] = None
     ) -> List[dict]:
         """
         Step 5: Generate a full scene illustration for each chapter.
         Uses existing Gemini session (session_ref) — no re-upload of book.
         Characters are referenced by name from portraits for prompt consistency.
+        Performs immediate persistence after saving each image, and skips already-generated illustrations on retry.
         """
         system_instructions = """
             There must be no text on the image, it should not look like a cover page.
@@ -354,9 +421,22 @@ class GeminiService:
             Stay family-friendly with uplifting colors.
             Each produced should be a simple image, no panels.
         """
+
+        existing_dict_by_id = {}
+        if existing_illustrations:
+            for item in existing_illustrations:
+                chap_id = item.get("chapter_id")
+                if chap_id and self._is_image_valid_on_disk(item.get("image_path")):
+                    existing_dict_by_id[chap_id] = item
+
         illustrations = []
 
         for chapter in chapters:
+            if chapter.id in existing_dict_by_id:
+                logger.info(f"Illustration for chapter '{chapter.title}' already exists on disk, skipping generation.")
+                illustrations.append(existing_dict_by_id[chapter.id])
+                continue
+
             logger.info(f"Generating illustration for chapter: {chapter.title}")
 
             # Prepare input items for Gemini
@@ -418,13 +498,20 @@ class GeminiService:
                 image_data=generated_image.data
             )
 
-            illustrations.append({
+            illustration_item = {
                 "chapter_id": chapter.id,
                 "chapter_title": chapter.title,
                 "image_path": image_path,
                 "generated_at": datetime.now(timezone.utc).isoformat()
-            })
+            }
+            illustrations.append(illustration_item)
             logger.info(f"Illustration saved: {image_path}")
+
+            if on_illustration_saved:
+                try:
+                    on_illustration_saved(illustration_item)
+                except Exception as err:
+                    logger.warning(f"Error in on_illustration_saved callback: {err}")
 
         logger.info(f"Illustration generation completed: {len(illustrations)}/{len(chapters)}")
         return illustrations

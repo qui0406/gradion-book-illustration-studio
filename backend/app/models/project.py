@@ -30,9 +30,11 @@ class Character(BaseModel):
     id: str
     name: str
     image_prompt: str
+    age: Optional[int] = Field(None, ge=18)
     description: Optional[str] = None
     portrait_ready: bool = False
     portrait_path: Optional[str] = None
+
 
 
 class Chapter(BaseModel):

@@ -376,12 +376,15 @@ export default function ProjectDetail() {
 
   const getPortraitPath = (char) => {
     const p = portraits.find(p => p.character_id === char.id || p.character_name === char.name);
-    return p?.image_path || null;
+    if (!p?.image_path) return null;
+    return `${p.image_path}?email=${encodeURIComponent(user?.email || '')}`;
   };
   const getIllustPath = (chap) => {
     const il = illustrations.find(i => i.chapter_id === chap.id || i.chapter_title === chap.title);
-    return il?.image_path || null;
+    if (!il?.image_path) return null;
+    return `${il.image_path}?email=${encodeURIComponent(user?.email || '')}`;
   };
+
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
